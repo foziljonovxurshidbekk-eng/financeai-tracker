@@ -92,7 +92,64 @@ test("Claude chat: tool orqali tranzaksiya qo'shadi (soxta API)", async () => {
     assert.equal(state.transactions.length, 1);
     assert.equal(state.transactions[0].amount, 200000);
   } finally {
+    srv.closeAllConnections();
     srv.close();
+    fake.closeAllConnections();
     fake.close();
+  }
+});
+
+test("Telegram bot: savol va operatsiyani ajratadi, hisobot tuzadi", () => {
+  const { isQuestion, monthReport } = require("../server/bot");
+  assert.equal(isQuestion("tushlikka 85 ming"), false);
+  assert.equal(isQuestion("Oqtepa reklamaga 2 mln"), false);
+  assert.equal(isQuestion("? bu oy 2 mln dan ko'p nima ketdi"), true);
+  assert.equal(isQuestion("qaysi loyiha eng foydali"), true);
+  assert.equal(isQuestion("bu oy qancha ishladik"), true);
+  const d = db.emptyDb();
+  d.transactions.push({ id: "x", type: "expense", scope: "personal", amount: 85000, date: new Date().toISOString().slice(0, 10), categoryId: d.categories[15].id });
+  assert.match(monthReport(d), /85 000 so'm/);
+});
+
+test("Telegram bot: xabar -> tasdiqlash -> saqlash (soxta Telegram API)", async () => {
+  const sent = [];
+  const tg = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const method = req.url.split("/").pop();
+      sent.push({ method, body: body ? JSON.parse(body) : {} });
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ ok: true, result: method === "sendMessage" ? { message_id: 1, date: 0, chat: { id: 7, type: "private" }, text: "" } : true }));
+    });
+  }).listen(0);
+  process.env.BOT_TOKEN = "123:abc";
+  process.env.TELEGRAM_ALLOWED_IDS = "7";
+  const saved = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY; // offline tahlil
+  const { startBot } = require("../server/bot");
+  const bot = startBot({ launch: false, telegram: { apiRoot: `http://127.0.0.1:${tg.address().port}` } });
+  bot.botInfo = { id: 1, is_bot: true, first_name: "b", username: "b" };
+  const from = { id: 7, is_bot: false, first_name: "U" };
+  const chat = { id: 7, type: "private" };
+  try {
+    db.reset();
+    await bot.handleUpdate({ update_id: 1, message: { message_id: 1, date: 0, from: { id: 99, is_bot: false, first_name: "X" }, chat: { id: 99, type: "private" }, text: "taksi 40 ming" } });
+    assert.match(sent.at(-1).body.text, /Ruxsat yo'q/);
+
+    await bot.handleUpdate({ update_id: 2, message: { message_id: 2, date: 0, from, chat, text: "taksiga 40 ming" } });
+    const msg = sent.filter((s) => s.method === "sendMessage").at(-1).body;
+    assert.match(msg.text, /40 000 so'm/);
+    const data = msg.reply_markup.inline_keyboard[0][0].callback_data;
+    assert.match(data, /^save:/);
+
+    await bot.handleUpdate({ update_id: 3, callback_query: { id: "c", from, chat_instance: "x", data, message: { message_id: 1, date: 0, chat, text: "" } } });
+    assert.equal(db.load().transactions.length, 1);
+    assert.equal(db.load().transactions[0].source, "telegram");
+    assert.ok(sent.some((s) => s.method === "editMessageText"));
+  } finally {
+    tg.closeAllConnections();
+    tg.close();
+    if (saved) process.env.ANTHROPIC_API_KEY = saved;
   }
 });

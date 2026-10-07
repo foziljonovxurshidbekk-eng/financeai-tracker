@@ -17,6 +17,17 @@ Marketing agentligi egasi uchun moliya paneli: shaxsiy va agentlik kirim-chiqiml
 
 O'ng pastdagi 🎙 tugmasi istalgan sahifadan ovoz bilan operatsiya qo'shish oynasini ochadi.
 
+### Telegram bot
+
+Bot sayt bilan bitta bazada ishlaydi:
+- **Oddiy matn** yozsangiz (masalan, *tushlikka 85 ming, Oqtepa reklamaga 2 mln*), AI operatsiyalarni ajratib ko'rsatadi. "✅ Saqlash" tugmasini bossangiz, ular saytga tushadi.
+- **Savol** yozsangiz (yoki boshiga `?` qo'ysangiz), Claude barcha ma'lumotlar asosida javob beradi.
+- `/hisobot` buyrug'i bu oyning qisqa hisobotini beradi: kirim, chiqim, foyda, eng katta xarajatlar, loyihalar marjasi, xodimlarga qarz.
+
+Sozlash tartibi: @BotFather'da bot yarating va tokenni `.env` fayliga `BOT_TOKEN` qilib yozing. Serverni ishga tushirib, botga `/start` yuboring. Bot sizning ID'ingizni ko'rsatadi, uni `TELEGRAM_ALLOWED_IDS` ga yozib, serverni qayta ishga tushiring.
+
+Telegram'ning ovozli xabarlari (audio) hozircha qo'llab-quvvatlanmaydi. Ovoz bilan kiritish uchun telefon klaviaturasidagi mikrofon tugmasidan (diktovka) yoki saytdagi 🎙 tugmasidan foydalaning.
+
 ## Ishga tushirish
 
 ```bash
@@ -50,6 +61,7 @@ Testlar quyidagilarni tekshiradi: marja va tannarx hisob-kitoblari, oylik va don
 ```
 server/index.js    Express API (CRUD, to'lovlar, eksport/import, demo)
 server/finance.js  Hisob-kitoblar: loyiha marjasi, xodimlar balansi, dashboard
+server/bot.js      Telegram bot (operatsiya qo'shish, savol-javob, /hisobot)
 server/ai.js       Claude: matn yoki ovozdan operatsiyalarni ajratish, tool'lar bilan chat
 server/db.js       JSON fayl ko'rinishidagi baza
 public/            Frontend (vanilla JS + Chart.js, liquid glass CSS)

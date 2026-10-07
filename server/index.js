@@ -207,5 +207,6 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Glass Finance: http://localhost:${PORT}  (AI: ${ai.hasKey() ? "Claude yoqilgan" : "offline rejim"})`);
   });
+  if (require("./bot").startBot()) console.log("Telegram bot ishga tushdi");
 }
 module.exports = app;
