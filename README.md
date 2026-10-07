@@ -44,9 +44,23 @@ Birinchi marta ochganda **Sozlamalar → Demo ma'lumot yuklash** tugmasini bosin
 - **Ma'lumotlar:** `data/db.json` faylida saqlanadi. Vaqti-vaqti bilan eksport qilib, zaxira nusxa olib turing.
 - **Himoya:** saytni internetga chiqarsangiz, `.env` faylida `APP_PASSWORD` ni albatta o'rnating.
 
-## Serverga joylash (deploy)
+## Serverga joylash (bepul)
 
-Node.js 18+ ishlaydigan istalgan joyga qo'yish mumkin: VPS (pm2 bilan), Railway, Render va hokazo. `data/` papkasi doimiy (persistent) diskda turishi shart, aks holda server qayta ishga tushganda ma'lumotlar o'chib ketadi. Mikrofon ishlashi uchun sayt HTTPS orqali ochilishi kerak.
+Ilova doim ishlab turishi kerak (Telegram bot uchun) va ma'lumotlar diskda saqlanadi. Shuning uchun uxlab qoladigan va diski o'chib ketadigan bepul platformalar (masalan, Render free) mos kelmaydi. Doimiy bepul virtual server tavsiya qilinadi:
+
+| Variant | Resurs | Izoh |
+|---|---|---|
+| **Oracle Cloud Always Free** (tavsiya) | 4 CPU / 24 GB RAM gacha (ARM), 200 GB disk | Muddatsiz bepul, ro'yxatdan o'tishda karta tasdiqlanadi |
+| **Google Cloud e2-micro** | 1 GB RAM, 30 GB disk | Muddatsiz bepul, faqat AQSh regionlari, karta kerak |
+
+1. Ubuntu 22.04/24.04 virtual server yarating va 80/443 portlarni oching (Oracle: *Security List → Ingress rules*, Google: *Allow HTTP/HTTPS traffic* belgilari).
+2. Serverga SSH orqali kiring va bitta buyruqni ishga tushiring:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/foziljonovxurshidbekk-eng/financeai-tracker/main/deploy/setup.sh | sudo bash
+```
+
+Skript quyidagilarni bajaradi: Node.js 22 ni o'rnatadi, kodni `/opt/glass-finance` ga yuklaydi, kalitlarni so'rab `.env` yaratadi va ilovani systemd xizmati sifatida ishga tushiradi. Bundan tashqari, `https://<server-IP>.sslip.io` manzilida bepul HTTPS sozlaydi (mikrofon ishlashi uchun HTTPS shart) va har kuni zaxira nusxa oladi. Kodni yangilash uchun shu buyruqni qayta ishga tushirasiz, bunda `.env` va ma'lumotlarga tegilmaydi.
 
 ## Testlar
 

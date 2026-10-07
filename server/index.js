@@ -204,7 +204,7 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
-  app.listen(PORT, () => {
+  app.listen(PORT, process.env.HOST || "0.0.0.0", () => {
     console.log(`Glass Finance: http://localhost:${PORT}  (AI: ${ai.hasKey() ? "Claude yoqilgan" : "offline rejim"})`);
   });
   if (require("./bot").startBot()) console.log("Telegram bot ishga tushdi");
