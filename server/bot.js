@@ -57,7 +57,7 @@ function monthReport(data) {
     .join("\n");
 }
 
-function startBot({ launch = true, telegram } = {}) {
+function startBot({ telegram } = {}) {
   const token = process.env.BOT_TOKEN;
   if (!token) return null;
   const allowed = String(process.env.TELEGRAM_ALLOWED_IDS || "")
@@ -162,12 +162,32 @@ function startBot({ launch = true, telegram } = {}) {
   });
 
   bot.catch((err) => console.error("Telegram bot xatosi:", err));
-  if (!launch) return bot;
-  bot.launch().catch((e) => console.error("Botni ishga tushirib bo'lmadi:", e.message));
-  process.once("SIGINT", () => bot.stop("SIGINT"));
-  process.once("SIGTERM", () => bot.stop("SIGTERM"));
   if (!allowed.length) console.warn("Diqqat: TELEGRAM_ALLOWED_IDS bo'sh — bot hech kimga javob bermaydi (faqat ID'ni ko'rsatadi).");
   return bot;
 }
 
-module.exports = { startBot, isQuestion, monthReport };
+// Webhook (Render kabi uxlab qoladigan hostinglar uchun) yoki polling rejimida ishga tushirish.
+// Webhook'da Telegram xabarni saytga yuboradi va uxlab yotgan servis uyg'onadi.
+async function runBot(app) {
+  const bot = startBot();
+  if (!bot) return null;
+  const base = process.env.WEBHOOK_URL || process.env.RENDER_EXTERNAL_URL;
+  try {
+    if (base && app) {
+      const domain = base.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+      const secret = require("crypto").createHash("sha256").update(process.env.BOT_TOKEN).digest("hex");
+      app.use(await bot.createWebhook({ domain, path: `/telegram/${secret.slice(0, 32)}`, secret_token: secret.slice(32) }));
+      console.log(`Telegram bot webhook rejimida: https://${domain}`);
+    } else {
+      bot.launch().catch((e) => console.error("Botni ishga tushirib bo'lmadi:", e.message));
+      process.once("SIGINT", () => bot.stop("SIGINT"));
+      process.once("SIGTERM", () => bot.stop("SIGTERM"));
+      console.log("Telegram bot polling rejimida ishga tushdi");
+    }
+  } catch (e) {
+    console.error("Telegram botni ulab bo'lmadi:", e.message);
+  }
+  return bot;
+}
+
+module.exports = { startBot, runBot, isQuestion, monthReport };

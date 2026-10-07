@@ -1,0 +1,22 @@
+# Render Blueprint: Dashboard → New → Blueprint → shu repo.
+services:
+  - type: web
+    name: glass-finance
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: node server/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL # Neon.tech bepul Postgres ulanish manzili
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ALLOWED_IDS
+        sync: false

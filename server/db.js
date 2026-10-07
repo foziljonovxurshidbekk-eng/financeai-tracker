@@ -60,6 +60,33 @@ function emptyDb() {
 
 let cache = null;
 
+// --- Saqlash joyi: DATABASE_URL bo'lsa Postgres (Render/Neon), aks holda JSON fayl ---
+let pg = null; // { pool, chain }
+
+async function init({ pool } = {}) {
+  const url = process.env.DATABASE_URL;
+  if (!pool && !url) return load();
+  if (!pool) {
+    const { Pool } = require("pg");
+    pool = new Pool({
+      connectionString: url,
+      ssl: /localhost|127\.0\.0\.1/.test(url) ? false : { rejectUnauthorized: false },
+      max: 3,
+    });
+  }
+  await pool.query("CREATE TABLE IF NOT EXISTS glass_finance (id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())");
+  const r = await pool.query("SELECT data FROM glass_finance WHERE id = 'main'");
+  pg = { pool, chain: Promise.resolve() };
+  if (r.rows.length) {
+    cache = typeof r.rows[0].data === "string" ? JSON.parse(r.rows[0].data) : r.rows[0].data;
+  } else {
+    cache = emptyDb();
+    save();
+  }
+  await flush();
+  return cache;
+}
+
 function load() {
   if (cache) return cache;
   if (!fs.existsSync(DB_FILE)) {
@@ -73,15 +100,31 @@ function load() {
 }
 
 function save() {
+  if (pg) {
+    // Yozuvlar ketma-ket bajariladi; navbatda bir nechta bo'lsa ham har biri eng so'nggi holatni yozadi
+    const json = JSON.stringify(cache);
+    pg.chain = pg.chain
+      .then(() =>
+        pg.pool.query(
+          "INSERT INTO glass_finance (id, data, updated_at) VALUES ('main', $1, now()) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+          [json]
+        )
+      )
+      .catch((e) => console.error("Bazaga yozib bo'lmadi:", e.message));
+    return;
+  }
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const tmp = DB_FILE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(cache, null, 2));
   fs.renameSync(tmp, DB_FILE);
 }
 
+// Navbatdagi barcha yozuvlar tugashini kutish
+const flush = () => (pg ? pg.chain : Promise.resolve());
+
 function reset(data) {
   cache = data || emptyDb();
   save();
 }
 
-module.exports = { load, save, reset, uid, emptyDb };
+module.exports = { init, load, save, flush, reset, uid, emptyDb, storage: () => (pg ? "postgres" : "file") };

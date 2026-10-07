@@ -11,6 +11,9 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 app.use("/vendor/chart.js", express.static(path.join(__dirname, "..", "node_modules", "chart.js", "dist")));
 
+// Uyg'otib turish (ping) va monitoring uchun
+app.get("/health", (req, res) => res.json({ ok: true }));
+
 // Oddiy parol himoyasi (APP_PASSWORD o'rnatilgan bo'lsa)
 app.use("/api", (req, res, next) => {
   const pass = process.env.APP_PASSWORD;
@@ -203,10 +206,19 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-if (require.main === module) {
+
+async function main() {
+  await db.init();
+  await require("./bot").runBot(app);
   app.listen(PORT, process.env.HOST || "0.0.0.0", () => {
-    console.log(`Glass Finance: http://localhost:${PORT}  (AI: ${ai.hasKey() ? "Claude yoqilgan" : "offline rejim"})`);
+    console.log(`Glass Finance: http://localhost:${PORT}  (AI: ${ai.hasKey() ? "Claude yoqilgan" : "offline rejim"}, baza: ${db.storage()})`);
   });
-  if (require("./bot").startBot()) console.log("Telegram bot ishga tushdi");
+}
+
+if (require.main === module) {
+  main().catch((e) => {
+    console.error("Ishga tushirib bo'lmadi:", e);
+    process.exit(1);
+  });
 }
 module.exports = app;

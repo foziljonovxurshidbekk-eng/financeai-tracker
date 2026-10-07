@@ -128,7 +128,7 @@ test("Telegram bot: xabar -> tasdiqlash -> saqlash (soxta Telegram API)", async 
   const saved = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY; // offline tahlil
   const { startBot } = require("../server/bot");
-  const bot = startBot({ launch: false, telegram: { apiRoot: `http://127.0.0.1:${tg.address().port}` } });
+  const bot = startBot({ telegram: { apiRoot: `http://127.0.0.1:${tg.address().port}` } });
   bot.botInfo = { id: 1, is_bot: true, first_name: "b", username: "b" };
   const from = { id: 7, is_bot: false, first_name: "U" };
   const chat = { id: 7, type: "private" };
@@ -152,4 +152,23 @@ test("Telegram bot: xabar -> tasdiqlash -> saqlash (soxta Telegram API)", async 
     tg.close();
     if (saved) process.env.ANTHROPIC_API_KEY = saved;
   }
+});
+
+test("Postgres rejimi: bazadan o'qiydi va yozadi (soxta pool)", async () => {
+  const rows = new Map();
+  const pool = {
+    async query(sql, params) {
+      if (/^SELECT/.test(sql)) return { rows: rows.has("main") ? [{ data: JSON.parse(rows.get("main")) }] : [] };
+      if (/^INSERT/.test(sql)) rows.set("main", params[0]);
+      return { rows: [] };
+    },
+  };
+  const dbPg = require("../server/db");
+  await dbPg.init({ pool });
+  assert.equal(dbPg.storage(), "postgres");
+  assert.ok(rows.has("main"), "bo'sh baza yaratildi");
+  dbPg.load().transactions.push({ id: "pg1", type: "income", amount: 1, scope: "agency", date: "2026-01-01" });
+  dbPg.save();
+  await dbPg.flush();
+  assert.equal(JSON.parse(rows.get("main")).transactions.at(-1).id, "pg1");
 });

@@ -44,23 +44,35 @@ Birinchi marta ochganda **Sozlamalar → Demo ma'lumot yuklash** tugmasini bosin
 - **Ma'lumotlar:** `data/db.json` faylida saqlanadi. Vaqti-vaqti bilan eksport qilib, zaxira nusxa olib turing.
 - **Himoya:** saytni internetga chiqarsangiz, `.env` faylida `APP_PASSWORD` ni albatta o'rnating.
 
-## Serverga joylash (bepul)
+## Serverga joylash (bepul, karta kerak emas): Render + Neon
 
-Ilova doim ishlab turishi kerak (Telegram bot uchun) va ma'lumotlar diskda saqlanadi. Shuning uchun uxlab qoladigan va diski o'chib ketadigan bepul platformalar (masalan, Render free) mos kelmaydi. Doimiy bepul virtual server tavsiya qilinadi:
+Render'ning bepul tarifida disk saqlanmaydi va servis uxlab qoladi. Shuning uchun ilova bu tarifga moslashtirilgan:
+- `DATABASE_URL` berilsa, ma'lumotlar bepul **Neon Postgres** bazasida saqlanadi va servis qayta ishga tushganda ham yo'qolmaydi;
+- Render'da Telegram bot **webhook** rejimida ishlaydi: kelgan xabar uxlab yotgan servisni o'zi uyg'otadi.
 
-| Variant | Resurs | Izoh |
-|---|---|---|
-| **Oracle Cloud Always Free** (tavsiya) | 4 CPU / 24 GB RAM gacha (ARM), 200 GB disk | Muddatsiz bepul, ro'yxatdan o'tishda karta tasdiqlanadi |
-| **Google Cloud e2-micro** | 1 GB RAM, 30 GB disk | Muddatsiz bepul, faqat AQSh regionlari, karta kerak |
+**1. Baza (Neon, 2 daqiqa).** https://neon.tech saytida GitHub orqali ro'yxatdan o'ting va **Create project** tugmasini bosing. Keyin **Connect** oynasidagi `postgresql://...` bilan boshlanadigan ulanish manzilini nusxalab oling.
 
-1. Ubuntu 22.04/24.04 virtual server yarating va 80/443 portlarni oching (Oracle: *Security List → Ingress rules*, Google: *Allow HTTP/HTTPS traffic* belgilari).
-2. Serverga SSH orqali kiring va bitta buyruqni ishga tushiring:
+**2. Sayt (Render).** https://render.com saytida **New → Blueprint** ni tanlang va `financeai-tracker` repozitoriysini ko'rsating. Render `render.yaml` faylini o'qiydi va quyidagi qiymatlarni so'raydi:
+
+| Kalit | Qiymat |
+|---|---|
+| `DATABASE_URL` | Neon'dan olingan `postgresql://...` manzil |
+| `APP_PASSWORD` | Saytga kirish paroli (o'zingiz o'ylab toping) |
+| `ANTHROPIC_API_KEY` | https://console.anthropic.com dan olingan kalit (bo'sh qolsa, AI offline rejimda ishlaydi) |
+| `BOT_TOKEN` | @BotFather bergan token |
+| `TELEGRAM_ALLOWED_IDS` | Telegram ID'ingiz. Bilmasangiz, avval bo'sh qoldiring, botga `/start` yozing, bot ID'ni ko'rsatadi, keyin shu yerga yozasiz |
+
+**Apply** tugmasini bosgandan bir necha daqiqa o'tib, sayt `https://glass-finance-xxxx.onrender.com` manzilida ochiladi.
+
+**3. Uxlab qolmasligi uchun (ixtiyoriy).** https://cron-job.org saytida bepul vazifa yarating: har 10 daqiqada `https://<sizning-manzil>.onrender.com/health` manzilini ochib tursin. Render bepul tarifida oyiga 750 soat beriladi, bu bitta servisning butun oy uzluksiz ishlashiga yetadi.
+
+### Muqobil: o'z virtual serveringiz (Oracle Cloud / VPS)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/foziljonovxurshidbekk-eng/financeai-tracker/main/deploy/setup.sh | sudo bash
 ```
 
-Skript quyidagilarni bajaradi: Node.js 22 ni o'rnatadi, kodni `/opt/glass-finance` ga yuklaydi, kalitlarni so'rab `.env` yaratadi va ilovani systemd xizmati sifatida ishga tushiradi. Bundan tashqari, `https://<server-IP>.sslip.io` manzilida bepul HTTPS sozlaydi (mikrofon ishlashi uchun HTTPS shart) va har kuni zaxira nusxa oladi. Kodni yangilash uchun shu buyruqni qayta ishga tushirasiz, bunda `.env` va ma'lumotlarga tegilmaydi.
+Bu skript Node.js'ni o'rnatadi, `.env` faylini yaratadi va ilovani systemd xizmati sifatida ishga tushiradi. Bundan tashqari, `https://<IP>.sslip.io` manzilida HTTPS sozlaydi va har kuni zaxira nusxa oladi.
 
 ## Testlar
 
@@ -77,6 +89,6 @@ server/index.js    Express API (CRUD, to'lovlar, eksport/import, demo)
 server/finance.js  Hisob-kitoblar: loyiha marjasi, xodimlar balansi, dashboard
 server/bot.js      Telegram bot (operatsiya qo'shish, savol-javob, /hisobot)
 server/ai.js       Claude: matn yoki ovozdan operatsiyalarni ajratish, tool'lar bilan chat
-server/db.js       JSON fayl ko'rinishidagi baza
+server/db.js       Baza: JSON fayl yoki Postgres (DATABASE_URL)
 public/            Frontend (vanilla JS + Chart.js, liquid glass CSS)
 ```
