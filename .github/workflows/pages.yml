@@ -1,4 +1,5 @@
-# Saytni (public/) GitHub Pages'ga joylaydi. API — Supabase Edge Function'da.
+# Saytni (public/) gh-pages branch'iga joylaydi — GitHub Pages shu branch'dan ko'rsatadi.
+# API — Supabase Edge Function'da (public/config.js).
 name: Sayt (GitHub Pages)
 
 on:
@@ -8,9 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -19,9 +18,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,9 +29,13 @@ jobs:
           mkdir -p _site/vendor/chart.js
           cp -r public/* _site/
           cp node_modules/chart.js/dist/chart.umd.min.js _site/vendor/chart.js/
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          touch _site/.nojekyll
+      - name: gh-pages branch'iga joylash
+        run: |
+          cd _site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Sayt: ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
