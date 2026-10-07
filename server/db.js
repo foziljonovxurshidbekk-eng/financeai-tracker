@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "..", "data");
+const DATA_DIR = process.env.DATA_DIR || (typeof __dirname !== "undefined" ? path.join(__dirname, "..", "data") : "./data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
 const DEFAULT_CATEGORIES = [
@@ -60,34 +60,60 @@ function emptyDb() {
 
 let cache = null;
 
-// --- Saqlash joyi: DATABASE_URL bo'lsa Postgres (Render/Neon), aks holda JSON fayl ---
-let pg = null; // { pool, chain }
+// --- Saqlash joyi ---
+// * store berilsa (masalan Supabase Edge Function'dagi REST store) — o'sha ishlatiladi
+// * DATABASE_URL yoki pool berilsa — Postgres (Supabase/Neon)
+// * aks holda — JSON fayl
+// store = { name, load(): Promise<data|null>, save(json): Promise<void> }
+let remote = null; // { store, chain }
 
-async function init({ pool } = {}) {
+function pgStore(pool) {
+  return {
+    name: "postgres",
+    async setup() {
+      await pool.query("CREATE TABLE IF NOT EXISTS glass_finance (id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())");
+      // Supabase: jadval REST API orqali ochilib qolmasin (siyosatsiz RLS = faqat server ulanishi o'qiy oladi)
+      await pool.query("ALTER TABLE glass_finance ENABLE ROW LEVEL SECURITY");
+      // Supabase bepul loyihalari 7 kun faolsiz qolsa pauza qilinadi — kuniga bir marta bazaga murojaat
+      setInterval(() => pool.query("SELECT 1").catch(() => {}), 24 * 3600 * 1000).unref?.();
+    },
+    async load() {
+      const r = await pool.query("SELECT data FROM glass_finance WHERE id = 'main'");
+      if (!r.rows.length) return null;
+      return typeof r.rows[0].data === "string" ? JSON.parse(r.rows[0].data) : r.rows[0].data;
+    },
+    save: (json) =>
+      pool.query(
+        "INSERT INTO glass_finance (id, data, updated_at) VALUES ('main', $1, now()) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+        [json]
+      ),
+  };
+}
+
+async function init({ pool, store } = {}) {
   const url = process.env.DATABASE_URL;
-  if (!pool && !url) return load();
-  if (!pool) {
-    const { Pool } = require("pg");
-    pool = new Pool({
-      connectionString: url,
-      ssl: /localhost|127\.0\.0\.1/.test(url) ? false : { rejectUnauthorized: false },
-      max: 3,
-    });
+  if (!store && !pool && !url) return load();
+  if (!store) {
+    if (!pool) {
+      const { Pool } = require("./deps").get("pg");
+      pool = new Pool({
+        connectionString: url,
+        ssl: /localhost|127\.0\.0\.1/.test(url) ? false : { rejectUnauthorized: false },
+        max: 3,
+      });
+    }
+    store = pgStore(pool);
+    await store.setup();
   }
-  await pool.query("CREATE TABLE IF NOT EXISTS glass_finance (id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())");
-  // Supabase: jadval REST API orqali ochilib qolmasin (siyosatsiz RLS = faqat server ulanishi o'qiy oladi)
-  await pool.query("ALTER TABLE glass_finance ENABLE ROW LEVEL SECURITY");
-  const r = await pool.query("SELECT data FROM glass_finance WHERE id = 'main'");
-  pg = { pool, chain: Promise.resolve() };
-  if (r.rows.length) {
-    cache = typeof r.rows[0].data === "string" ? JSON.parse(r.rows[0].data) : r.rows[0].data;
+  remote = { store, chain: Promise.resolve() };
+  const data = await store.load();
+  if (data) {
+    cache = { ...emptyDb(), ...data };
   } else {
     cache = emptyDb();
     save();
   }
   await flush();
-  // Supabase bepul loyihalari 7 kun faolsiz qolsa pauza qilinadi — kuniga bir marta bazaga murojaat
-  setInterval(() => pool.query("SELECT 1").catch(() => {}), 24 * 3600 * 1000).unref();
   return cache;
 }
 
@@ -104,16 +130,11 @@ function load() {
 }
 
 function save() {
-  if (pg) {
-    // Yozuvlar ketma-ket bajariladi; navbatda bir nechta bo'lsa ham har biri eng so'nggi holatni yozadi
+  if (remote) {
+    // Yozuvlar ketma-ket bajariladi; har biri saqlash chaqirilgan paytdagi holatni yozadi
     const json = JSON.stringify(cache);
-    pg.chain = pg.chain
-      .then(() =>
-        pg.pool.query(
-          "INSERT INTO glass_finance (id, data, updated_at) VALUES ('main', $1, now()) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
-          [json]
-        )
-      )
+    remote.chain = remote.chain
+      .then(() => remote.store.save(json))
       .catch((e) => console.error("Bazaga yozib bo'lmadi:", e.message));
     return;
   }
@@ -124,11 +145,11 @@ function save() {
 }
 
 // Navbatdagi barcha yozuvlar tugashini kutish
-const flush = () => (pg ? pg.chain : Promise.resolve());
+const flush = () => (remote ? remote.chain : Promise.resolve());
 
 function reset(data) {
   cache = data || emptyDb();
   save();
 }
 
-module.exports = { init, load, save, flush, reset, uid, emptyDb, storage: () => (pg ? "postgres" : "file") };
+module.exports = { init, load, save, flush, reset, uid, emptyDb, storage: () => (remote ? remote.store.name : "file") };

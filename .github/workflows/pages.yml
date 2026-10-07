@@ -1,0 +1,41 @@
+# Saytni (public/) GitHub Pages'ga joylaydi. API — Supabase Edge Function'da.
+name: Sayt (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+    paths: ["public/**", "package.json", "package-lock.json", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --omit=dev
+      - name: Saytni yig'ish
+        run: |
+          mkdir -p _site/vendor/chart.js
+          cp -r public/* _site/
+          cp node_modules/chart.js/dist/chart.umd.min.js _site/vendor/chart.js/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

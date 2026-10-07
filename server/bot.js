@@ -1,12 +1,12 @@
 // Telegram bot: sayt bilan bitta bazada ishlaydi.
 // Matn yuborsangiz — AI operatsiyalarni ajratadi va tasdiqlash tugmalarini chiqaradi.
 // Savol bersangiz — AI (Gemini yoki Claude) moliyaviy maslahatchi sifatida javob beradi.
-const { Telegraf, Markup } = require("telegraf");
+const deps = require("./deps");
 const db = require("./db");
 const ai = require("./ai");
 const { dashboard, employeeStats, projectStats } = require("./finance");
 
-const money = (n) => Math.round(n || 0).toLocaleString("ru-RU").replace(/[ ,]/g, " ") + " so'm";
+const money = (n) => Math.round(n || 0).toLocaleString("ru-RU").replace(/[\s,]/g, " ") + " so'm";
 const pct = (x) => (isFinite(x) ? (x * 100).toFixed(1).replace(".0", "") + "%" : "—");
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const scopeName = { agency: "Agentlik", personal: "Shaxsiy" };
@@ -60,23 +60,39 @@ function monthReport(data) {
 function startBot({ telegram } = {}) {
   const token = process.env.BOT_TOKEN;
   if (!token) return null;
-  const allowed = String(process.env.TELEGRAM_ALLOWED_IDS || "")
-    .split(/[,\s]+/)
-    .filter(Boolean);
+  const { Telegraf, Markup } = deps.get("telegraf");
+  const allowedEnv = () =>
+    String(process.env.TELEGRAM_ALLOWED_IDS || "")
+      .split(/[,\s]+/)
+      .filter(Boolean);
 
   const bot = new Telegraf(token, telegram ? { telegram } : {});
-  const pending = new Map(); // id -> { drafts, userId }
-  const histories = new Map(); // userId -> chat messages
 
-  // Faqat ruxsat berilgan foydalanuvchilar
+  // Bot holati bazada saqlanadi (Supabase Edge'da har so'rov alohida ishga tushadi)
+  const state = () => {
+    const d = db.load();
+    d._bot ??= {};
+    d._bot.pending ??= {}; // id -> { drafts, userId, ts }
+    d._bot.histories ??= {}; // userId -> chat messages
+    d._bot.owners ??= []; // birinchi /start yozgan foydalanuvchi
+    return d._bot;
+  };
+  const PENDING_TTL = 24 * 3600 * 1000;
+
+  // Faqat ruxsat berilgan foydalanuvchilar. Ro'yxat bo'sh bo'lsa — birinchi yozgan odam egasi bo'ladi.
   bot.use(async (ctx, next) => {
     const id = String(ctx.from?.id || "");
+    if (!id) return;
+    const st = state();
+    const allowed = [...allowedEnv(), ...st.owners];
     if (allowed.includes(id)) return next();
-    return ctx.reply(
-      `⛔ Ruxsat yo'q.\nSizning Telegram ID: <code>${id}</code>\n` +
-        `Uni serverdagi .env fayliga TELEGRAM_ALLOWED_IDS=${id} deb yozing va serverni qayta ishga tushiring.`,
-      { parse_mode: "HTML" }
-    );
+    if (!allowed.length) {
+      st.owners.push(id);
+      db.save();
+      await ctx.reply("🔐 Siz bot egasi sifatida ro'yxatdan o'tdingiz. Endi bot faqat sizga javob beradi.");
+      return next();
+    }
+    return ctx.reply(`⛔ Ruxsat yo'q. Sizning Telegram ID: <code>${id}</code>`, { parse_mode: "HTML" });
   });
 
   bot.start((ctx) =>
@@ -92,7 +108,8 @@ function startBot({ telegram } = {}) {
 
   bot.command("hisobot", (ctx) => ctx.reply(monthReport(db.load()), { parse_mode: "HTML" }));
   bot.command("yangi", (ctx) => {
-    histories.delete(ctx.from.id);
+    delete state().histories[ctx.from.id];
+    db.save();
     return ctx.reply("Suhbat tozalandi ✓");
   });
 
@@ -127,11 +144,12 @@ function startBot({ telegram } = {}) {
     const data = db.load();
     try {
       if (isQuestion(text)) {
-        const history = histories.get(ctx.from.id) || [];
+        const history = state().histories[ctx.from.id] || [];
         history.push({ role: "user", content: text.replace(/^[?？]\s*/, "") });
         const r = await ai.chat(data, history, { uid: db.uid, save: db.save });
         history.push({ role: "assistant", content: r.reply });
-        histories.set(ctx.from.id, history.slice(-20));
+        state().histories[ctx.from.id] = history.slice(-20);
+        db.save();
         return ctx.reply(r.reply.slice(0, 4000));
       }
 
@@ -139,8 +157,10 @@ function startBot({ telegram } = {}) {
       const valid = drafts.filter((d) => d.amount > 0);
       if (!valid.length) return ctx.reply("Summani topa olmadim. Masalan: «taksiga 40 ming».");
       const id = db.uid();
-      pending.set(id, { drafts: valid, userId: ctx.from.id });
-      setTimeout(() => pending.delete(id), 60 * 60 * 1000).unref();
+      const st = state();
+      for (const [k, v] of Object.entries(st.pending)) if (Date.now() - v.ts > PENDING_TTL) delete st.pending[k];
+      st.pending[id] = { drafts: valid, userId: ctx.from.id, ts: Date.now() };
+      db.save();
       return ctx.reply(
         `${engine !== "offline" ? "✦ AI aniqladi" : "Aniqlandi (offline)"}:\n\n` +
           valid.map((d) => draftLine(d, data)).join("\n\n"),
@@ -159,9 +179,10 @@ function startBot({ telegram } = {}) {
   }
 
   bot.action(/^save:(.+)$/, async (ctx) => {
-    const p = pending.get(ctx.match[1]);
+    const st = state();
+    const p = st.pending[ctx.match[1]];
     if (!p || p.userId !== ctx.from.id) return ctx.answerCbQuery("Muddati o'tgan");
-    pending.delete(ctx.match[1]);
+    delete st.pending[ctx.match[1]];
     const data = db.load();
     const now = new Date().toISOString();
     for (const d of p.drafts) data.transactions.push({ id: db.uid(), ...d, source: "telegram", createdAt: now });
@@ -174,13 +195,13 @@ function startBot({ telegram } = {}) {
   });
 
   bot.action(/^cancel:(.+)$/, async (ctx) => {
-    pending.delete(ctx.match[1]);
+    delete state().pending[ctx.match[1]];
+    db.save();
     await ctx.answerCbQuery("Bekor qilindi");
     return ctx.editMessageText("❌ Bekor qilindi");
   });
 
   bot.catch((err) => console.error("Telegram bot xatosi:", err));
-  if (!allowed.length) console.warn("Diqqat: TELEGRAM_ALLOWED_IDS bo'sh — bot hech kimga javob bermaydi (faqat ID'ni ko'rsatadi).");
   return bot;
 }
 

@@ -54,7 +54,7 @@ const statusName = { active: "Jarayonda", done: "Yakunlangan", paused: "To'xtati
 
 // ---------- API ----------
 async function api(path, opts = {}) {
-  const res = await fetch("/api" + path, {
+  const res = await fetch((window.GF_API_BASE || "") + "/api" + path, {
     method: opts.method || "GET",
     headers: { "Content-Type": "application/json", "x-app-key": localGet("key", "") },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -1181,7 +1181,7 @@ function renderLogin() {
     <input type="password" id="pw" placeholder="Parol" style="margin:14px 0" /><button class="btn primary" id="pwGo" style="width:100%;justify-content:center">Kirish</button></div>`;
   const go = async () => {
     const pw = $("#pw").value;
-    const r = await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw }) }).then((r) => r.json());
+    const r = await fetch((window.GF_API_BASE || "") + "/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw }) }).then((r) => r.json());
     if (r.ok) { localSet("key", pw); S.data = null; route(); } else toast("Parol noto'g'ri", true);
   };
   $("#pwGo").onclick = go;

@@ -1,6 +1,7 @@
 // AI integratsiyasi: matn/ovozdan tranzaksiya ajratish va moliyaviy chat.
 // Provayder: Google Gemini (GEMINI_API_KEY, bepul tarifi bor) yoki Anthropic Claude (ANTHROPIC_API_KEY).
 const { projectStats, employeeStats, dashboard } = require("./finance");
+const deps = require("./deps");
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 // Rad etilgan (refusal) so'rovlar server tomonida avtomatik boshqa modelda qayta ishlanadi.
@@ -26,14 +27,14 @@ function provider() {
 
 let claudeClient = null;
 function claude() {
-  const Anthropic = require("@anthropic-ai/sdk");
+  const Anthropic = deps.get("@anthropic-ai/sdk");
   claudeClient ??= new Anthropic();
   return claudeClient;
 }
 
 let geminiClient = null;
 function gemini() {
-  const { GoogleGenAI } = require("@google/genai");
+  const { GoogleGenAI } = deps.get("@google/genai");
   geminiClient ??= new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY,
     httpOptions: {
