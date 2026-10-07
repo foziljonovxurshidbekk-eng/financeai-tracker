@@ -1,0 +1,21 @@
+{
+  "name": "glass-finance",
+  "version": "1.0.0",
+  "description": "Shaxsiy va agentlik moliyasi: loyihalar marjasi, xodimlar oyliklari, Claude AI chat va ovozli kiritish",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "chart.js": "^4.5.1",
+    "dotenv": "^18.0.6",
+    "express": "^5.2.1"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}
