@@ -1185,7 +1185,7 @@ function renderLogin() {
     if (r.ok) { localSet("key", pw); S.data = null; route(); } else toast("Parol noto'g'ri", true);
   };
   $("#pwGo").onclick = go;
-  $("#pw").onkeydown = (e) => e.key === "Enter" && go();
+  $("#pw").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
 }
 
 // ================= INIT =================
