@@ -25,6 +25,8 @@ function seedDemo(d, uid) {
     emp("Dilshod Rahimov", "Mobilograf", "piece", 250000, "reels", 5),
     emp("Madina Yusupova", "Dizayner", "piece", 80000, "post dizayn", 5),
     emp("Sardor Aliyev", "Copywriter", "piece", 50000, "matn", 3),
+    // Aralash: oylik maosh + har bir montaj qilingan video uchun alohida haq
+    { ...emp("Kamola Nazarova", "Montajchi", "mixed", 3000000, "video", 2), pieceRate: 150000 },
   ];
   d.employees = employees;
 
@@ -110,12 +112,13 @@ function seedDemo(d, uid) {
 
   // Dona ishlar va ularga to'lovlar
   const logs = [];
-  const [, , dilshod, madina, sardor] = employees;
+  const [, , dilshod, madina, sardor, kamola] = employees;
   for (let m = 4; m >= 0; m--) {
     logs.push({ id: uid(), employeeId: dilshod.id, date: dateAgo(m, 10), qty: 12, projectId: p1.id, note: "Oqtepa reels" });
     logs.push({ id: uid(), employeeId: madina.id, date: dateAgo(m, 12), qty: 20, projectId: p1.id, note: "Oqtepa postlar" });
     if (m <= 3) logs.push({ id: uid(), employeeId: madina.id, date: dateAgo(m, 14), qty: 8, projectId: p2.id, note: "Texnomart bannerlar" });
     if (m <= 2) logs.push({ id: uid(), employeeId: sardor.id, date: dateAgo(m, 13), qty: 25, projectId: p1.id, note: "Post matnlari" });
+    if (m <= 2) logs.push({ id: uid(), employeeId: kamola.id, date: dateAgo(m, 16), qty: 10, projectId: p2.id, note: "Texnomart videolari montaji" });
     if (m >= 1) {
       add(m, 27, "expense", "agency", "Dona ish haqi (frilans)", 12 * dilshod.rate, `${dilshod.name} — reels`, { employeeId: dilshod.id, projectId: p1.id });
       add(m, 27, "expense", "agency", "Dona ish haqi (frilans)", 20 * madina.rate, `${madina.name} — postlar`, { employeeId: madina.id, projectId: p1.id });

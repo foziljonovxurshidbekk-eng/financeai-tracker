@@ -13,14 +13,14 @@ const FIELDS = {
   transactions: ["type", "amount", "scope", "categoryId", "date", "note", "projectId", "employeeId", "source"],
   categories: ["name", "type", "scope", "color"],
   projects: ["name", "client", "status", "budget", "startDate", "endDate", "items", "note"],
-  employees: ["name", "role", "payType", "rate", "unitName", "startDate", "endDate", "active", "phone", "note"],
+  employees: ["name", "role", "payType", "rate", "pieceRate", "unitName", "startDate", "endDate", "active", "phone", "note"],
   workLogs: ["employeeId", "date", "qty", "rate", "projectId", "note"],
 };
 
 function clean(collection, body) {
   const out = {};
   for (const k of FIELDS[collection]) if (body[k] !== undefined) out[k] = body[k];
-  for (const k of ["amount", "budget", "rate", "qty"]) if (out[k] != null && out[k] !== "") out[k] = Number(out[k]);
+  for (const k of ["amount", "budget", "rate", "pieceRate", "qty"]) if (out[k] != null && out[k] !== "") out[k] = Number(out[k]);
   for (const k of ["projectId", "employeeId", "categoryId"]) if (out[k] === "") out[k] = null;
   if (out.rate === "") delete out.rate;
   return out;

@@ -286,7 +286,7 @@ async function dashboard(page) {
       maintainAspectRatio: false,
       cutout: "68%",
       plugins: {
-        legend: { position: "right", labels: { font: { size: 11.5 }, boxWidth: 8 } },
+        legend: { position: "bottom", labels: { font: { size: 11.5 }, boxWidth: 8, padding: 10 } },
         tooltip: { callbacks: { label: (c) => ` ${c.label}: ${money(c.parsed)} (${pct(c.parsed / d.expense)})` } },
       },
     },
@@ -461,11 +461,11 @@ async function transactions(page) {
 
     <div class="card glass">
       <div class="toolbar" style="margin-bottom:14px">
-        <input id="fq" placeholder="Qidirish…" value="${esc(f.q)}" style="max-width:220px" />
-        <select id="ftype" style="max-width:140px"><option value="">Turi: hammasi</option><option value="income" ${f.type === "income" ? "selected" : ""}>Kirim</option><option value="expense" ${f.type === "expense" ? "selected" : ""}>Chiqim</option></select>
-        <select id="fscope" style="max-width:150px"><option value="">Bo'lim: hammasi</option><option value="agency" ${f.scope === "agency" ? "selected" : ""}>Agentlik</option><option value="personal" ${f.scope === "personal" ? "selected" : ""}>Shaxsiy</option></select>
-        <select id="fcat" style="max-width:220px"><option value="">Kategoriya: hammasi</option>${S.data.categories.map((c) => `<option value="${c.id}" ${f.category === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
-        <select id="fproj" style="max-width:200px"><option value="">Loyiha: hammasi</option>${S.data.projects.map((p) => `<option value="${p.id}" ${f.project === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+        <input id="fq" placeholder="Qidirish…" value="${esc(f.q)}" />
+        <select id="ftype"><option value="">Turi: hammasi</option><option value="income" ${f.type === "income" ? "selected" : ""}>Kirim</option><option value="expense" ${f.type === "expense" ? "selected" : ""}>Chiqim</option></select>
+        <select id="fscope"><option value="">Bo'lim: hammasi</option><option value="agency" ${f.scope === "agency" ? "selected" : ""}>Agentlik</option><option value="personal" ${f.scope === "personal" ? "selected" : ""}>Shaxsiy</option></select>
+        <select id="fcat"><option value="">Kategoriya: hammasi</option>${S.data.categories.map((c) => `<option value="${c.id}" ${f.category === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
+        <select id="fproj"><option value="">Loyiha: hammasi</option>${S.data.projects.map((p) => `<option value="${p.id}" ${f.project === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
         <span class="pill ok num">+${compact(inc)}</span><span class="pill bad num">−${compact(exp)}</span><span class="pill num">${list.length} ta</span>
       </div>
       ${list.length ? list.slice(0, 400).map(txRow).join("") : `<div class="empty">Hech narsa topilmadi</div>`}
@@ -756,7 +756,7 @@ function projectDetail(page, p) {
         ${tx.length ? tx.map(txRow).join("") : `<div class="empty">Operatsiya yo'q</div>`}</div>
       <div class="card glass"><h3>Dona ishlar</h3><p class="sub">Xodimlar shu loyiha uchun bajargan ishlar</p>
         ${logs.length ? `<table><thead><tr><th>Sana</th><th>Xodim</th><th class="r">Soni</th><th class="r">Summa</th></tr></thead><tbody>
-          ${logs.map((w) => { const e = emp(w.employeeId); return `<tr><td>${fmtDate(w.date)}</td><td>${esc(e?.name || "—")}<br><small class="sub">${esc(w.note || "")}</small></td><td class="r num">${w.qty} ${esc(e?.unitName || "")}</td><td class="r num">${num(w.qty * (w.rate ?? e?.rate ?? 0))}</td></tr>`; }).join("")}
+          ${logs.map((w) => { const e = emp(w.employeeId); return `<tr><td>${fmtDate(w.date)}</td><td>${esc(e?.name || "—")}<br><small class="sub">${esc(w.note || "")}</small></td><td class="r num">${w.qty} ${esc(e?.unitName || "")}</td><td class="r num">${num(w.qty * (w.rate ?? unitRate(e)))}</td></tr>`; }).join("")}
         </tbody></table>` : `<div class="empty">Yo'q</div>`}
       </div>
     </div>`;
@@ -796,7 +796,7 @@ function projectDetail(page, p) {
   mkChart($("#cPCat"), {
     type: "doughnut",
     data: { labels: entries.map((e) => e[0]), datasets: [{ data: entries.map((e) => e[1]), backgroundColor: entries.map((e) => S.data.categories.find((c) => c.name === e[0])?.color || "#8a90a6"), borderWidth: 0, spacing: 2, borderRadius: 4 }] },
-    options: { maintainAspectRatio: false, cutout: "65%", plugins: { legend: { position: "right" }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${money(c.parsed)} (${pct(c.parsed / s.cost)})` } } } },
+    options: { maintainAspectRatio: false, cutout: "65%", plugins: { legend: { position: "bottom", labels: { boxWidth: 8, padding: 10 } }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${money(c.parsed)} (${pct(c.parsed / s.cost)})` } } } },
   });
 }
 
@@ -831,17 +831,32 @@ function projectModal(p) {
 }
 
 // ================= JAMOA =================
+// To'lov turlari: oylik, dona bo'yicha, yoki oylik + dona (aralash)
+const PAY_NAMES = { monthly: "Oylik", piece: "Dona", mixed: "Oylik + dona" };
+const hasSalary = (e) => e?.payType === "monthly" || e?.payType === "mixed";
+const hasPiece = (e) => e?.payType === "piece" || e?.payType === "mixed";
+const unitRate = (e) => Number(e?.payType === "mixed" ? e.pieceRate : e?.rate) || 0;
+const unitName = (e) => e?.unitName || "dona";
+function payTag(e) {
+  return '<span class="tag">' + esc(PAY_NAMES[e.payType] || "Oylik") + (hasPiece(e) ? " · " + esc(unitName(e)) : "") + "</span>";
+}
+function rateCell(e) {
+  const parts = [];
+  if (hasSalary(e)) parts.push(money(e.rate) + '<br><small class="sub">oyiga</small>');
+  if (hasPiece(e)) parts.push(money(unitRate(e)) + '<br><small class="sub">1 ' + esc(unitName(e)) + " uchun</small>");
+  return parts.join("<br>");
+}
 async function team(page) {
   const list = S.data.employees;
   const active = list.filter((e) => e.active !== false);
   const t = active.reduce((a, e) => ({ acc: a.acc + e.stats.monthAccrued, paid: a.paid + e.stats.monthPaid, debt: a.debt + Math.max(0, e.stats.balance) }), { acc: 0, paid: 0, debt: 0 });
   page.innerHTML = `
     <div class="page-head">
-      <div><h1>Jamoa va oyliklar</h1><p>Oylik yoki dona bo'yicha ishlaydigan xodimlar, hisoblangan va to'langan pullar</p></div>
+      <div><h1>Jamoa va oyliklar</h1><p>Oylik, dona bo'yicha yoki ikkalasi bilan ishlaydigan xodimlar: hisoblangan va to'langan pullar</p></div>
       <div class="toolbar"><input type="month" id="tm" value="${S.teamMonth}" style="width:auto" /><button class="btn primary" id="addEmp">+ Xodim</button></div>
     </div>
     <div class="grid kpis" style="margin-bottom:18px">
-      ${kpi("Xodimlar", active.length + " ta", `${active.filter((e) => e.payType === "monthly").length} oylik · ${active.filter((e) => e.payType === "piece").length} dona`, "var(--accent)")}
+      ${kpi("Xodimlar", active.length + " ta", Object.entries(PAY_NAMES).map(([k, n]) => [n, active.filter((e) => (e.payType || "monthly") === k).length]).filter(([, c]) => c).map(([n, c]) => `${c} ${n.toLowerCase()}`).join(" · ") || "—", "var(--accent)")}
       ${kpi("Shu oy hisoblangan", money(t.acc), "Oylik + bajarilgan dona ishlar", "var(--accent-2)")}
       ${kpi("Shu oy to'langan", money(t.paid), "Ish haqi chiqimlari", "var(--income)")}
       ${kpi("Jami qarzimiz", money(t.debt), "Hisoblangan − to'langan (barcha davr)", "var(--expense)")}
@@ -853,13 +868,13 @@ async function team(page) {
           const s = e.stats;
           return `<tr style="${e.active === false ? "opacity:.5" : ""}">
             <td><b style="cursor:pointer" data-emp="${e.id}">${esc(e.name)}</b><br><small class="sub">${esc(e.role || "")}</small></td>
-            <td>${e.payType === "piece" ? `<span class="tag">Dona · ${esc(e.unitName || "dona")}</span>` : `<span class="tag">Oylik</span>`}</td>
-            <td class="r num">${money(e.rate)}${e.payType === "piece" ? `<br><small class="sub">1 ${esc(e.unitName || "dona")} uchun</small>` : ""}</td>
-            <td class="r num">${money(s.monthAccrued)}${e.payType === "piece" ? `<br><small class="sub">${s.monthUnits} ${esc(e.unitName || "dona")}</small>` : ""}</td>
+            <td>${payTag(e)}</td>
+            <td class="r num">${rateCell(e)}</td>
+            <td class="r num">${money(s.monthAccrued)}${hasPiece(e) ? `<br><small class="sub">${s.monthUnits} ${esc(unitName(e))}</small>` : ""}</td>
             <td class="r num">${money(s.monthPaid)}</td>
             <td class="r num"><b class="${s.balance > 0 ? "down" : "up"}">${money(Math.abs(s.balance))}</b><br><small class="sub">${s.balance > 0 ? "qarzmiz" : s.balance < 0 ? "avans berilgan" : "hisob-kitob teng"}</small></td>
             <td><div class="row-actions">
-              ${e.payType === "piece" ? `<button class="btn sm" data-log="${e.id}">+ Ish</button>` : ""}
+              ${hasPiece(e) ? `<button class="btn sm" data-log="${e.id}">+ Ish</button>` : ""}
               <button class="btn sm primary" data-pay="${e.id}">To'lash</button>
               <button class="btn sm" data-emp="${e.id}">⋯</button>
             </div></td></tr>`;
@@ -887,28 +902,38 @@ async function team(page) {
 function empModal(e) {
   const x = e || { payType: "monthly", startDate: today(), active: true };
   const m = openModal(`
-    <h2>${e ? "Xodimni tahrirlash" : "Yangi xodim"}</h2><p class="sub">Oylik — har oy belgilangan summa; dona — bajarilgan ish soni × dona narxi</p>
+    <h2>${e ? "Xodimni tahrirlash" : "Yangi xodim"}</h2><p class="sub">Oylik — har oy belgilangan summa. Dona — bajarilgan ish soni × dona narxi. Oylik + dona — ikkalasi birga.</p>
     <div class="form-grid">
       <label class="f">Ism familiya<input id="en" value="${esc(x.name || "")}" /></label>
       <label class="f">Lavozim<input id="er" value="${esc(x.role || "")}" placeholder="SMM, dizayner, mobilograf…" /></label>
-      <label class="f">To'lov turi ${seg("ept", [["monthly", "Oylik"], ["piece", "Dona bo'yicha"]], x.payType)}</label>
-      <label class="f"><span id="rateLbl">${x.payType === "piece" ? "1 dona narxi (so'm)" : "Oylik maosh (so'm)"}</span><input id="erate" type="number" value="${x.rate || ""}" /></label>
-      <label class="f" id="unitWrap" style="${x.payType === "piece" ? "" : "display:none"}">Birlik nomi<input id="eu" value="${esc(x.unitName || "")}" placeholder="reels, post, video, matn…" /></label>
+      <label class="f full">To'lov turi ${seg("ept", [["monthly", "Oylik"], ["piece", "Dona bo'yicha"], ["mixed", "Oylik + dona"]], x.payType)}</label>
+      <label class="f" id="salWrap">Oylik maosh (so'm)<input id="esal" type="number" value="${hasSalary(x) ? x.rate || "" : ""}" /></label>
+      <label class="f" id="pieceWrap">1 dona narxi (so'm)<input id="epiece" type="number" value="${hasPiece(x) ? unitRate(x) || "" : ""}" /></label>
+      <label class="f" id="unitWrap">Birlik nomi<input id="eu" value="${esc(x.unitName || "")}" placeholder="reels, post, video, matn…" /></label>
       <label class="f">Ishga kirgan sana<input id="es" type="date" value="${x.startDate || ""}" /></label>
       <label class="f">Telefon<input id="ep" value="${esc(x.phone || "")}" /></label>
       <label class="f">Holati<select id="ea"><option value="1" ${x.active !== false ? "selected" : ""}>Ishlayapti</option><option value="0" ${x.active === false ? "selected" : ""}>Ketgan</option></select></label>
     </div>
     <div class="modal-foot">${e ? `<button class="btn danger" id="edel" style="margin-right:auto">O'chirish</button>` : ""}<button class="btn" data-close>Bekor</button><button class="btn primary" id="esave">Saqlash</button></div>`);
+  const showFields = () => {
+    $("#salWrap", m).style.display = hasSalary(x) ? "" : "none";
+    $("#pieceWrap", m).style.display = hasPiece(x) ? "" : "none";
+    $("#unitWrap", m).style.display = hasPiece(x) ? "" : "none";
+  };
+  showFields();
   bindSeg(m, "ept", (v) => {
     x.payType = v;
     $$('[data-seg="ept"] button', m).forEach((b) => b.classList.toggle("on", b.dataset.v === v));
-    $("#rateLbl", m).textContent = v === "piece" ? "1 dona narxi (so'm)" : "Oylik maosh (so'm)";
-    $("#unitWrap", m).style.display = v === "piece" ? "" : "none";
+    showFields();
   });
   $("#en", m).focus();
   $("#esave", m).onclick = async () => {
     const active = $("#ea", m).value === "1";
-    const body = { name: $("#en", m).value.trim(), role: $("#er", m).value.trim(), payType: x.payType, rate: $("#erate", m).value, unitName: $("#eu", m).value.trim(), startDate: $("#es", m).value, phone: $("#ep", m).value, active, endDate: active ? "" : x.endDate || today() };
+    const body = { name: $("#en", m).value.trim(), role: $("#er", m).value.trim(), payType: x.payType,
+      // "rate" — oylik (monthly/mixed) yoki dona narxi (piece); "pieceRate" — aralash turdagi dona narxi
+      rate: x.payType === "piece" ? $("#epiece", m).value : $("#esal", m).value,
+      pieceRate: x.payType === "mixed" ? $("#epiece", m).value : "",
+      unitName: $("#eu", m).value.trim(), startDate: $("#es", m).value, phone: $("#ep", m).value, active, endDate: active ? "" : x.endDate || today() };
     try {
       await api(e ? "/employees/" + e.id : "/employees", { method: e ? "PUT" : "POST", body });
       closeModal(); toast("Saqlandi ✓"); await refresh(); route();
@@ -931,7 +956,7 @@ function payModal(e) {
       <label class="f">Summa (so'm)<input id="pa" type="number" value="${suggested || ""}" /></label>
       <label class="f">Sana<input id="pdt" type="date" value="${today()}" /></label>
       <label class="f">Loyiha (tannarxga qo'shiladi)<select id="pp">${projOptions("")}</select></label>
-      <label class="f">Izoh<input id="pnt" value="${esc(e.name)} — ${e.payType === "piece" ? "dona ishlar uchun" : "oylik"}" /></label>
+      <label class="f">Izoh<input id="pnt" value="${esc(e.name)} — ${{ piece: "dona ishlar uchun", mixed: "oylik va dona ishlar" }[e.payType] || "oylik"}" /></label>
     </div>
     <p class="sub" style="margin-top:12px">To'lov avtomatik ravishda agentlikning "${e.payType === "piece" ? "Dona ish haqi" : "Ish haqi / oylik"}" chiqimi sifatida yoziladi.</p>
     <div class="modal-foot"><button class="btn" data-close>Bekor</button><button class="btn primary" id="psv">To'lovni saqlash</button></div>`);
@@ -946,17 +971,17 @@ function payModal(e) {
 
 function logModal(e) {
   const m = openModal(`
-    <h2>${esc(e.name)} — bajarilgan ish</h2><p class="sub">1 ${esc(e.unitName || "dona")} = ${money(e.rate)}</p>
+    <h2>${esc(e.name)} — bajarilgan ish</h2><p class="sub">1 ${esc(unitName(e))} = ${money(unitRate(e))}</p>
     <div class="form-grid">
-      <label class="f">Soni (${esc(e.unitName || "dona")})<input id="lq" type="number" min="0" value="1" /></label>
+      <label class="f">Soni (${esc(unitName(e))})<input id="lq" type="number" min="0" value="1" /></label>
       <label class="f">Sana<input id="ld" type="date" value="${today()}" /></label>
       <label class="f">Loyiha<select id="lp">${projOptions("")}</select></label>
-      <label class="f">Dona narxi (boshqacha bo'lsa)<input id="lr" type="number" placeholder="${e.rate}" /></label>
+      <label class="f">Dona narxi (boshqacha bo'lsa)<input id="lr" type="number" placeholder="${unitRate(e)}" /></label>
       <label class="f full">Izoh<input id="ln" /></label>
     </div>
     <p class="sub" id="lsum" style="margin-top:12px"></p>
     <div class="modal-foot"><button class="btn" data-close>Bekor</button><button class="btn primary" id="lsv">Saqlash</button></div>`);
-  const upd = () => ($("#lsum", m).innerHTML = `Hisoblanadi: <b>${money(Number($("#lq", m).value) * (Number($("#lr", m).value) || e.rate))}</b>`);
+  const upd = () => ($("#lsum", m).innerHTML = `Hisoblanadi: <b>${money(Number($("#lq", m).value) * (Number($("#lr", m).value) || unitRate(e)))}</b>`);
   $("#lq", m).oninput = upd; $("#lr", m).oninput = upd; upd();
   $("#lsv", m).onclick = async () => {
     try {
@@ -972,17 +997,17 @@ function empDetail(e) {
   const logs = S.data.workLogs.filter((w) => w.employeeId === e.id).sort((a, b) => b.date.localeCompare(a.date));
   const m = openModal(`
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap">
-      <div><h2>${esc(e.name)}</h2><p class="sub">${esc(e.role || "")} · ${e.payType === "piece" ? `dona: ${money(e.rate)} / ${esc(e.unitName || "dona")}` : `oylik: ${money(e.rate)}`} · ${e.startDate ? "ishga kirgan " + fmtDate(e.startDate) : ""}</p></div>
-      <div class="toolbar"><button class="btn sm" id="dEdit">Tahrirlash</button>${e.payType === "piece" ? `<button class="btn sm" id="dLog">+ Ish</button>` : ""}<button class="btn sm primary" id="dPay">To'lash</button></div>
+      <div><h2>${esc(e.name)}</h2><p class="sub">${esc(e.role || "")} · ${[hasSalary(e) ? `oylik: ${money(e.rate)}` : "", hasPiece(e) ? `dona: ${money(unitRate(e))} / ${esc(unitName(e))}` : ""].filter(Boolean).join(" + ")} · ${e.startDate ? "ishga kirgan " + fmtDate(e.startDate) : ""}</p></div>
+      <div class="toolbar"><button class="btn sm" id="dEdit">Tahrirlash</button>${hasPiece(e) ? `<button class="btn sm" id="dLog">+ Ish</button>` : ""}<button class="btn sm primary" id="dPay">To'lash</button></div>
     </div>
     <div class="grid kpis" style="grid-template-columns:repeat(3,1fr)">
-      ${kpi("Jami hisoblangan", money(e.stats.accruedTotal), e.payType === "piece" ? `${e.stats.unitsTotal} ${esc(e.unitName || "dona")}` : "Oylar × maosh", "var(--accent-2)")}
+      ${kpi("Jami hisoblangan", money(e.stats.accruedTotal), [hasSalary(e) ? "oylik " + compact(e.stats.salaryTotal ?? 0) : "", hasPiece(e) ? `${e.stats.unitsTotal} ${esc(unitName(e))} — ${compact(e.stats.pieceTotal ?? 0)}` : ""].filter(Boolean).join(" · "), "var(--accent-2)")}
       ${kpi("Jami to'langan", money(e.stats.paidTotal), `${e.stats.paymentsCount} ta to'lov`, "var(--income)")}
       ${kpi("Qoldiq", money(e.stats.balance), e.stats.balance > 0 ? "Xodimga qarzmiz" : "Qarz yo'q", "var(--expense)")}
     </div>
     <div class="grid cols-2e" style="margin-top:16px">
       <div><h3>To'lovlar tarixi</h3>${pays.length ? pays.map(txRow).join("") : `<div class="empty">To'lov yo'q</div>`}</div>
-      <div><h3>Bajarilgan ishlar</h3>${logs.length ? `<table><tbody>${logs.map((w) => `<tr><td>${fmtDate(w.date)}<br><small class="sub">${esc(proj(w.projectId)?.name || "")} ${esc(w.note || "")}</small></td><td class="r num">${w.qty} ${esc(e.unitName || "")}</td><td class="r num">${num(w.qty * (w.rate ?? e.rate))}</td><td><button class="btn sm danger" data-dlog="${w.id}">✕</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">${e.payType === "piece" ? "Ish kiritilmagan" : "Oylik xodim"}</div>`}</div>
+      <div><h3>Bajarilgan ishlar</h3>${logs.length ? `<table><tbody>${logs.map((w) => `<tr><td>${fmtDate(w.date)}<br><small class="sub">${esc(proj(w.projectId)?.name || "")} ${esc(w.note || "")}</small></td><td class="r num">${w.qty} ${esc(unitName(e))}</td><td class="r num">${num(w.qty * (w.rate ?? unitRate(e)))}</td><td><button class="btn sm danger" data-dlog="${w.id}">✕</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">${hasPiece(e) ? "Ish kiritilmagan" : "Oylik xodim — dona ishlar yo'q"}</div>`}</div>
     </div>`, true);
   $("#dEdit", m).onclick = () => { closeModal(); empModal(e); };
   $("#dPay", m).onclick = () => { closeModal(); payModal(e); };
@@ -1204,6 +1229,7 @@ function applyTheme(t, remember) {
   applyTheme(localGet("theme2", null) || "dark"); // standart — to'q liquid glass
   $("#themeBtn").onclick = () => { applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true); route(); };
   $("#fab").onclick = () => quickModal(true);
+  $("#sideVoice").onclick = () => quickModal(true);
   $("#fab").classList.add("liquid");
   window.addEventListener("hashchange", route);
   route();

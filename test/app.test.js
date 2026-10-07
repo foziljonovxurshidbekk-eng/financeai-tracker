@@ -227,3 +227,20 @@ test("Gemini: tahlil (JSON) va chat (function calling), model 404 bo'lsa zaxira 
     fake.close();
   }
 });
+
+test("aralash (oylik + dona) xodim: ikkalasi qo'shilib hisoblanadi", () => {
+  const { employeeStats } = require("../server/finance");
+  const d = db.emptyDb();
+  const month = new Date().toISOString().slice(0, 7);
+  const e = { id: "m1", name: "Kamola", payType: "mixed", rate: 3_000_000, pieceRate: 150_000, startDate: month + "-01" };
+  d.workLogs.push({ id: "w", employeeId: "m1", qty: 10, date: month + "-05" });
+  d.transactions.push({ id: "t", type: "expense", amount: 2_000_000, employeeId: "m1", date: month + "-06" });
+  const s = employeeStats(d, e, month);
+  assert.equal(s.monthAccrued, 3_000_000 + 10 * 150_000);
+  assert.equal(s.salaryTotal, 3_000_000);
+  assert.equal(s.pieceTotal, 1_500_000);
+  assert.equal(s.balance, 4_500_000 - 2_000_000);
+  // oylik xodimning dona ishlari hisobga kirmaydi
+  const monthly = { id: "m1", payType: "monthly", rate: 3_000_000, startDate: month + "-01" };
+  assert.equal(employeeStats(d, monthly, month).monthAccrued, 3_000_000);
+});

@@ -36,7 +36,7 @@ function projectStats(db, project) {
     .filter((w) => w.projectId === project.id)
     .reduce((s, w) => {
       const emp = db.employees.find((e) => e.id === w.employeeId);
-      const rate = w.rate != null ? Number(w.rate) : Number(emp?.rate) || 0;
+      const rate = w.rate != null ? Number(w.rate) : unitRate(emp);
       return s + (Number(w.qty) || 0) * rate;
     }, 0);
 
@@ -77,42 +77,48 @@ function monthsBetween(startDate, endDate) {
 }
 
 // Xodim bo'yicha: hisoblangan, to'langan, qarz (oy bo'yicha yoki jami)
+// To'lov turlari: "monthly" — oylik maosh, "piece" — dona bo'yicha, "mixed" — oylik + dona
+const hasSalary = (e) => e.payType === "monthly" || e.payType === "mixed";
+const hasPiece = (e) => e.payType === "piece" || e.payType === "mixed";
+const unitRate = (e) => Number(e?.payType === "mixed" ? e.pieceRate : e?.rate) || 0;
+const salary = (e) => (hasSalary(e) ? Number(e.rate) || 0 : 0);
+
 function employeeStats(db, emp, month) {
   const today = new Date().toISOString().slice(0, 10);
-  const logs = db.workLogs.filter((w) => w.employeeId === emp.id);
+  const logs = hasPiece(emp) ? db.workLogs.filter((w) => w.employeeId === emp.id) : [];
   const payments = db.transactions.filter(
     (t) => t.employeeId === emp.id && t.type === "expense"
   );
-  const logAmount = (w) =>
-    (Number(w.qty) || 0) * (w.rate != null ? Number(w.rate) : Number(emp.rate) || 0);
+  const logAmount = (w) => (Number(w.qty) || 0) * (w.rate != null ? Number(w.rate) : unitRate(emp));
 
-  let accruedTotal;
-  if (emp.payType === "monthly") {
+  let salaryTotal = 0;
+  if (hasSalary(emp)) {
     const start = emp.startDate || today;
     const end = emp.active === false && emp.endDate ? emp.endDate : today;
-    accruedTotal = monthsBetween(start, end) * (Number(emp.rate) || 0);
-  } else {
-    accruedTotal = logs.reduce((s, w) => s + logAmount(w), 0);
+    salaryTotal = monthsBetween(start, end) * salary(emp);
   }
+  const pieceTotal = logs.reduce((s, w) => s + logAmount(w), 0);
+  const accruedTotal = salaryTotal + pieceTotal;
   const paidTotal = sum(payments);
 
   let monthAccrued = 0;
   let monthPaid = 0;
   let monthUnits = 0;
   if (month) {
-    if (emp.payType === "monthly") {
+    if (hasSalary(emp)) {
       const started = !emp.startDate || emp.startDate.slice(0, 7) <= month;
-      monthAccrued = started ? Number(emp.rate) || 0 : 0;
-    } else {
-      const ml = logs.filter((w) => monthKey(w.date) === month);
-      monthAccrued = ml.reduce((s, w) => s + logAmount(w), 0);
-      monthUnits = ml.reduce((s, w) => s + (Number(w.qty) || 0), 0);
+      monthAccrued += started ? salary(emp) : 0;
     }
+    const ml = logs.filter((w) => monthKey(w.date) === month);
+    monthAccrued += ml.reduce((s, w) => s + logAmount(w), 0);
+    monthUnits = ml.reduce((s, w) => s + (Number(w.qty) || 0), 0);
     monthPaid = sum(payments.filter((t) => monthKey(t.date) === month));
   }
 
   return {
     accruedTotal,
+    salaryTotal,
+    pieceTotal,
     paidTotal,
     balance: accruedTotal - paidTotal, // + => xodimga qarzmiz, - => avans berilgan
     monthAccrued,
@@ -219,4 +225,4 @@ function pick(o, keys) {
   return Object.fromEntries(keys.map((k) => [k, o[k]]));
 }
 
-module.exports = { projectStats, employeeStats, dashboard, monthKey };
+module.exports = { projectStats, employeeStats, dashboard, monthKey, hasSalary, hasPiece, unitRate };

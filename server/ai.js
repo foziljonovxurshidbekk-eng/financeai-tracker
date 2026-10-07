@@ -2,6 +2,7 @@
 // Provayder: Google Gemini (GEMINI_API_KEY, bepul tarifi bor) yoki Anthropic Claude (ANTHROPIC_API_KEY).
 const { projectStats, employeeStats, dashboard } = require("./finance");
 const deps = require("./deps");
+const PAY_NAMES = { monthly: "oylik", piece: "dona", mixed: "oylik + dona" };
 
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 // Rad etilgan (refusal) so'rovlar server tomonida avtomatik boshqa modelda qayta ishlanadi.
@@ -139,7 +140,7 @@ async function parseTransactions(db, text, defaultScope) {
     defaultScope: defaultScope || "aniqlanmagan",
     categories: db.categories.map((c) => `${c.name} [${c.type}, ${c.scope}]`),
     projects: db.projects.map((p) => p.name),
-    employees: db.employees.map((e) => `${e.name} (${e.role || ""}, ${e.payType === "piece" ? "dona" : "oylik"})`),
+    employees: db.employees.map((e) => `${e.name} (${e.role || ""}, ${PAY_NAMES[e.payType] || "oylik"})`),
   };
   const prompt = `Kontekst:\n${JSON.stringify(context, null, 1)}\n\nMatn:\n"""${text}"""`;
 
@@ -320,8 +321,9 @@ function snapshot(db) {
     employees: db.employees.map((e) => ({
       name: e.name,
       role: e.role,
-      payType: e.payType === "piece" ? "dona" : "oylik",
-      rate: e.rate,
+      payType: PAY_NAMES[e.payType] || "oylik",
+      monthlySalary: e.payType === "piece" ? 0 : e.rate,
+      pieceRate: e.payType === "piece" ? e.rate : e.payType === "mixed" ? e.pieceRate : 0,
       unit: e.unitName,
       active: e.active !== false,
       ...employeeStats(db, e, month),
