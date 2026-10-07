@@ -71,7 +71,7 @@ async function api(path, opts = {}) {
 async function refresh() {
   S.data = await api("/state?month=" + S.teamMonth);
   const badge = $("#aiBadge");
-  badge.textContent = S.data.aiEnabled ? "✦ Claude ulangan" : "AI offline";
+  badge.textContent = S.data.aiEnabled ? `✦ ${S.data.aiProvider} ulangan` : "AI offline";
   badge.className = "pill " + (S.data.aiEnabled ? "ok" : "warn");
 }
 
@@ -534,7 +534,7 @@ function renderDrafts(box, drafts, engine, source, onSaved) {
   if (!drafts.length) { box.innerHTML = `<div class="empty">Summa topilmadi. Aniqroq yozib ko'ring.</div>`; return; }
   const draw = () => {
     box.innerHTML = `
-      <p class="sub" style="margin:0 0 10px">${engine === "claude" ? "✦ Claude aniqladi" : "Offline tahlil (aniqroq natija uchun ANTHROPIC_API_KEY qo'shing)"} — tekshirib saqlang:</p>
+      <p class="sub" style="margin:0 0 10px">${engine !== "offline" ? `✦ ${S.data.aiProvider || "AI"} aniqladi` : "Offline tahlil (aniqroq natija uchun GEMINI_API_KEY qo'shing)"} — tekshirib saqlang:</p>
       ${drafts.map((d, i) => `
         <div class="draft" data-i="${i}">
           <select data-k="type"><option value="expense" ${d.type === "expense" ? "selected" : ""}>Chiqim</option><option value="income" ${d.type === "income" ? "selected" : ""}>Kirim</option></select>
@@ -955,7 +955,7 @@ const SUGGESTIONS = [
 
 async function aiPage(page) {
   page.innerHTML = `
-    <div class="page-head"><div><h1>✦ Claude bilan suhbat</h1><p>Barcha kirim-chiqim, loyihalar va oyliklar bo'yicha savol bering yoki yangi operatsiya qo'shtiring</p></div>
+    <div class="page-head"><div><h1>✦ AI bilan suhbat${S.data.aiProvider ? ` <span class="pill">${S.data.aiProvider}</span>` : ""}</h1><p>Barcha kirim-chiqim, loyihalar va oyliklar bo'yicha savol bering yoki yangi operatsiya qo'shtiring</p></div>
       <button class="btn sm" id="clearChat">Tozalash</button></div>
     <div class="chat glass">
       <div class="chat-log" id="log"></div>
@@ -1059,8 +1059,8 @@ async function settings(page) {
       </div>
     </div>
     <div class="card glass" style="margin-top:18px">
-      <h3>Claude AI</h3>
-      <p class="sub">${S.data.aiEnabled ? "✓ Claude ulangan. Ovozli/matnli kiritish va chat to'liq AI rejimida ishlaydi." : "AI hozir offline rejimda (oddiy kalit so'zlar bo'yicha tahlil). To'liq imkoniyat uchun serverdagi <code>.env</code> fayliga <code>ANTHROPIC_API_KEY=...</code> qo'shing va qayta ishga tushiring."}</p>
+      <h3>AI yordamchi</h3>
+      <p class="sub">${S.data.aiEnabled ? `✓ ${S.data.aiProvider} ulangan. Ovozli/matnli kiritish va chat to'liq AI rejimida ishlaydi.` : "AI hozir offline rejimda (oddiy kalit so'zlar bo'yicha tahlil). To'liq imkoniyat uchun serverdagi <code>.env</code> fayliga (yoki Render'da Environment bo'limiga) bepul <code>GEMINI_API_KEY</code> qo'shing (aistudio.google.com/apikey) va qayta ishga tushiring."}</p>
     </div>`;
 
   $$("[data-addcat]", page).forEach((b) => (b.onclick = async () => {

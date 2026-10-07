@@ -1,6 +1,6 @@
 // Telegram bot: sayt bilan bitta bazada ishlaydi.
 // Matn yuborsangiz — AI operatsiyalarni ajratadi va tasdiqlash tugmalarini chiqaradi.
-// Savol bersangiz — Claude moliyaviy maslahatchi sifatida javob beradi.
+// Savol bersangiz — AI (Gemini yoki Claude) moliyaviy maslahatchi sifatida javob beradi.
 const { Telegraf, Markup } = require("telegraf");
 const db = require("./db");
 const ai = require("./ai");
@@ -124,7 +124,7 @@ function startBot({ telegram } = {}) {
       pending.set(id, { drafts: valid, userId: ctx.from.id });
       setTimeout(() => pending.delete(id), 60 * 60 * 1000).unref();
       return ctx.reply(
-        `${engine === "claude" ? "✦ Claude aniqladi" : "Aniqlandi (offline)"}:\n\n` +
+        `${engine !== "offline" ? "✦ AI aniqladi" : "Aniqlandi (offline)"}:\n\n` +
           valid.map((d) => draftLine(d, data)).join("\n\n"),
         {
           parse_mode: "HTML",

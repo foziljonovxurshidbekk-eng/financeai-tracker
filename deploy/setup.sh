@@ -52,14 +52,14 @@ DOMAIN="${DOMAIN:-${PUBLIC_IP:+$PUBLIC_IP.sslip.io}}"
 
 if [ ! -f "$APP_DIR/.env" ]; then
   say "Sozlamalar (.env). Bo'sh qoldirish mumkin bo'lganlari — Enter."
-  ask ANTHROPIC_API_KEY "Claude API kaliti (console.anthropic.com)" secret
+  ask GEMINI_API_KEY "Gemini API kaliti (bepul: aistudio.google.com/apikey)" secret
   ask BOT_TOKEN "Telegram bot tokeni (@BotFather)" secret
   ask TELEGRAM_ALLOWED_IDS "Sizning Telegram ID (bilmasangiz bo'sh qoldiring, bot /start da ko'rsatadi)"
   APP_PASSWORD=""
   while [ -z "$APP_PASSWORD" ]; do ask APP_PASSWORD "Saytga kirish paroli (majburiy)" secret; done
   umask 077
   cat >"$APP_DIR/.env" <<EOF
-ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+GEMINI_API_KEY=$GEMINI_API_KEY
 BOT_TOKEN=$BOT_TOKEN
 TELEGRAM_ALLOWED_IDS=$TELEGRAM_ALLOWED_IDS
 APP_PASSWORD=$APP_PASSWORD

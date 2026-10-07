@@ -14,7 +14,7 @@ services:
         sync: false
       - key: APP_PASSWORD
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: GEMINI_API_KEY # bepul: aistudio.google.com/apikey
         sync: false
       - key: BOT_TOKEN
         sync: false

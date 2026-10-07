@@ -41,6 +41,7 @@ app.get("/api/state", (req, res) => {
   res.json({
     ...d,
     aiEnabled: ai.hasKey(),
+    aiProvider: ai.providerName(),
     projects: d.projects.map((p) => ({ ...p, stats: projectStats(d, p) })),
     employees: d.employees.map((e) => ({ ...e, stats: employeeStats(d, e, month) })),
   });
@@ -211,7 +212,7 @@ async function main() {
   await db.init();
   await require("./bot").runBot(app);
   app.listen(PORT, process.env.HOST || "0.0.0.0", () => {
-    console.log(`Glass Finance: http://localhost:${PORT}  (AI: ${ai.hasKey() ? "Claude yoqilgan" : "offline rejim"}, baza: ${db.storage()})`);
+    console.log(`Glass Finance: http://localhost:${PORT}  (AI: ${ai.providerName() || "offline rejim"}, baza: ${db.storage()})`);
   });
 }
 

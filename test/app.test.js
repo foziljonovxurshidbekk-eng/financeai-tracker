@@ -172,3 +172,58 @@ test("Postgres rejimi: bazadan o'qiydi va yozadi (soxta pool)", async () => {
   await dbPg.flush();
   assert.equal(JSON.parse(rows.get("main")).transactions.at(-1).id, "pg1");
 });
+
+test("Gemini: tahlil (JSON) va chat (function calling), model 404 bo'lsa zaxira model (soxta API)", async () => {
+  const calls = [];
+  let step = 0;
+  const fake = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const json = JSON.parse(body || "{}");
+      calls.push({ url: req.url, json });
+      res.setHeader("content-type", "application/json");
+      if (req.url.includes("gemini-flash-latest")) {
+        res.statusCode = 404;
+        return res.end(JSON.stringify({ error: { code: 404, message: "not found", status: "NOT_FOUND" } }));
+      }
+      step++;
+      const cand = (parts) => JSON.stringify({ candidates: [{ content: { role: "model", parts }, finishReason: "STOP" }] });
+      if (json.generationConfig?.responseMimeType === "application/json") {
+        return res.end(cand([{ text: JSON.stringify({ transactions: [{ type: "expense", amount: 85000, scope: "personal", category: "Kafe va restoran", date: "2026-10-07", note: "tushlik", project: "", employee: "" }] }) }]));
+      }
+      if (!json.contents.some((c) => c.parts.some((p) => p.functionResponse))) {
+        return res.end(cand([{ functionCall: { name: "add_transactions", args: { transactions: [{ type: "expense", amount: 200000, scope: "personal", category: "Transport / taksi / benzin", date: "2026-10-07", note: "benzin", project: "", employee: "" }] } } }]));
+      }
+      return res.end(cand([{ text: "Qo'shildi: benzin 200 000 so'm" }]));
+    });
+  }).listen(0);
+  process.env.GEMINI_API_KEY = "g-test";
+  process.env.GEMINI_BASE_URL = `http://127.0.0.1:${fake.address().port}`;
+  const ai = require("../server/ai");
+  try {
+    assert.equal(ai.provider(), "gemini");
+    const d = db.emptyDb();
+    const parsed = await ai.parseTransactions(d, "tushlikka 85 ming", "");
+    assert.equal(parsed.engine, "gemini");
+    assert.equal(parsed.drafts[0].amount, 85000);
+    assert.equal(d.categories.find((c) => c.id === parsed.drafts[0].categoryId).name, "Kafe va restoran");
+    const schemaSent = calls.find((c) => c.json.generationConfig?.responseJsonSchema).json.generationConfig.responseJsonSchema;
+    assert.ok(!JSON.stringify(schemaSent).includes("additionalProperties"));
+    assert.ok(calls.some((c) => c.url.includes("gemini-2.5-flash")), "zaxira modelga o'tdi");
+
+    let saved = 0;
+    const r = await ai.chat(d, [{ role: "user", content: "benzinga 200 ming ketdi" }], { uid: () => "x" + saved, save: () => saved++ });
+    assert.equal(r.changed, true);
+    assert.match(r.reply, /benzin/);
+    assert.equal(d.transactions.at(-1).amount, 200000);
+    const last = calls.at(-1).json;
+    assert.ok(last.contents.at(-1).parts[0].functionResponse.response.result.added === 1);
+    assert.ok(last.systemInstruction, "system prompt yuborildi");
+  } finally {
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_BASE_URL;
+    fake.closeAllConnections();
+    fake.close();
+  }
+});

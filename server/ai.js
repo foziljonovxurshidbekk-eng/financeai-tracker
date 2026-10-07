@@ -1,16 +1,64 @@
-// Claude bilan integratsiya: matn/ovozdan tranzaksiya ajratish va moliyaviy chat.
-const Anthropic = require("@anthropic-ai/sdk");
+// AI integratsiyasi: matn/ovozdan tranzaksiya ajratish va moliyaviy chat.
+// Provayder: Google Gemini (GEMINI_API_KEY, bepul tarifi bor) yoki Anthropic Claude (ANTHROPIC_API_KEY).
 const { projectStats, employeeStats, dashboard } = require("./finance");
 
-const MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 // Rad etilgan (refusal) so'rovlar server tomonida avtomatik boshqa modelda qayta ishlanadi.
 const FALLBACK = { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" };
+// "gemini-flash-latest" — Google'ning eng so'nggi Flash modeliga ishora qiladi (bepul tarifda mavjud)
+const GEMINI_MODELS = [process.env.GEMINI_MODEL || "gemini-flash-latest", "gemini-2.5-flash"];
 
-let client = null;
-function getClient() {
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) return null;
-  client ??= new Anthropic();
-  return client;
+function provider() {
+  const hasGemini = !!process.env.GEMINI_API_KEY;
+  const hasClaude = !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+  const want = String(process.env.AI_PROVIDER || "").toLowerCase();
+  if (want === "claude" && hasClaude) return "claude";
+  if (want === "gemini" && hasGemini) return "gemini";
+  return hasGemini ? "gemini" : hasClaude ? "claude" : null;
+}
+
+let claudeClient = null;
+function claude() {
+  const Anthropic = require("@anthropic-ai/sdk");
+  claudeClient ??= new Anthropic();
+  return claudeClient;
+}
+
+let geminiClient = null;
+function gemini() {
+  const { GoogleGenAI } = require("@google/genai");
+  geminiClient ??= new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+    ...(process.env.GEMINI_BASE_URL ? { httpOptions: { baseUrl: process.env.GEMINI_BASE_URL } } : {}),
+  });
+  return geminiClient;
+}
+
+// Model nomi topilmasa (404) keyingisiga o'tadi
+async function geminiGenerate(params) {
+  let lastErr;
+  for (const model of [...new Set(GEMINI_MODELS)]) {
+    try {
+      return await gemini().models.generateContent({ ...params, model });
+    } catch (e) {
+      lastErr = e;
+      if (e?.status !== 404) break;
+    }
+  }
+  if (lastErr?.status === 429) throw new Error("Gemini bepul limiti tugadi, birozdan keyin urinib ko'ring");
+  throw lastErr;
+}
+
+// Gemini JSON Schema'ning kichik to'plamini qabul qiladi — ortiqcha kalitlarni olib tashlaymiz
+function geminiSchema(schema) {
+  if (Array.isArray(schema)) return schema.map(geminiSchema);
+  if (!schema || typeof schema !== "object") return schema;
+  const out = {};
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === "additionalProperties" || k === "strict") continue;
+    out[k] = geminiSchema(v);
+  }
+  return out;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -26,9 +74,21 @@ function textOf(response) {
 // ---------------------------------------------------------------------------
 // 1) Erkin matn (yoki ovozdan olingan matn) -> tranzaksiyalar qoralamasi
 // ---------------------------------------------------------------------------
+const PARSE_SYSTEM =
+  "Sen marketing agentligi egasining moliyaviy yordamchisisan. Foydalanuvchi o'zbek, rus yoki aralash tilda " +
+  "(ko'pincha ovozdan yozilgan, xatoli matn) kirim-chiqimlarini aytadi. Matndan barcha alohida tranzaksiyalarni ajrat.\n" +
+  "Qoidalar:\n" +
+  "- Summalarni so'mga aylantir: 'ming'/'k'/'тыс' = 1000, 'mln'/'million'/'миллион' = 1 000 000. Dollar aytilsa, note'da yoz va summani 12 800 kurs bilan so'mga aylantir.\n" +
+  "- scope: agentlik ishi (mijoz, reklama, xodim, loyiha, ofis) = agency; shaxsiy xarajat (ovqat, uy, oila, taksi) = personal. Aniq bo'lmasa defaultScope'dan foydalan.\n" +
+  "- category: faqat ro'yxatdagi nomlardan, type va scope'ga mos kelganini tanla.\n" +
+  "- Sana: 'bugun' = today, 'kecha' = today-1 va h.k. Aytilmasa today.\n" +
+  "- Xodimga to'lov bo'lsa employee maydoniga ro'yxatdagi ismni yoz, kategoriya ish haqi bo'lsin.\n" +
+  "- Loyiha/mijoz nomi tilga olinsa, ro'yxatdagi eng mos loyiha nomini project'ga yoz.\n" +
+  "- note: qisqa, tushunarli izoh.";
+
 async function parseTransactions(db, text, defaultScope) {
-  const api = getClient();
-  if (!api) return { drafts: fallbackParse(db, text, defaultScope), engine: "offline" };
+  const ai = provider();
+  if (!ai) return { drafts: fallbackParse(db, text, defaultScope), engine: "offline" };
 
   const categoryNames = db.categories.map((c) => c.name);
   const schema = {
@@ -64,35 +124,36 @@ async function parseTransactions(db, text, defaultScope) {
     projects: db.projects.map((p) => p.name),
     employees: db.employees.map((e) => `${e.name} (${e.role || ""}, ${e.payType === "piece" ? "dona" : "oylik"})`),
   };
+  const prompt = `Kontekst:\n${JSON.stringify(context, null, 1)}\n\nMatn:\n"""${text}"""`;
 
-  const response = await api.beta.messages.create({
-    model: MODEL,
-    max_tokens: 4000,
-    ...FALLBACK,
-    output_config: { effort: "low", format: { type: "json_schema", schema } },
-    system:
-      "Sen marketing agentligi egasining moliyaviy yordamchisisan. Foydalanuvchi o'zbek, rus yoki aralash tilda " +
-      "(ko'pincha ovozdan yozilgan, xatoli matn) kirim-chiqimlarini aytadi. Matndan barcha alohida tranzaksiyalarni ajrat.\n" +
-      "Qoidalar:\n" +
-      "- Summalarni so'mga aylantir: 'ming'/'k'/'тыс' = 1000, 'mln'/'million'/'миллион' = 1 000 000. Dollar aytilsa, note'da yoz va summani 12 800 kurs bilan so'mga aylantir.\n" +
-      "- scope: agentlik ishi (mijoz, reklama, xodim, loyiha, ofis) = agency; shaxsiy xarajat (ovqat, uy, oila, taksi) = personal. Aniq bo'lmasa defaultScope'dan foydalan.\n" +
-      "- category: faqat ro'yxatdagi nomlardan, type va scope'ga mos kelganini tanla.\n" +
-      "- Sana: 'bugun' = today, 'kecha' = today-1 va h.k. Aytilmasa today.\n" +
-      "- Xodimga to'lov bo'lsa employee maydoniga ro'yxatdagi ismni yoz, kategoriya ish haqi bo'lsin.\n" +
-      "- Loyiha/mijoz nomi tilga olinsa, ro'yxatdagi eng mos loyiha nomini project'ga yoz.\n" +
-      "- note: qisqa, tushunarli izoh.",
-    messages: [
-      {
-        role: "user",
-        content: `Kontekst:\n${JSON.stringify(context, null, 1)}\n\nMatn:\n"""${text}"""`,
+  let json;
+  if (ai === "gemini") {
+    const res = await geminiGenerate({
+      contents: prompt,
+      config: {
+        systemInstruction: PARSE_SYSTEM,
+        responseMimeType: "application/json",
+        responseJsonSchema: geminiSchema(schema),
+        temperature: 0.1,
       },
-    ],
-  });
+    });
+    json = res.text;
+  } else {
+    const response = await claude().beta.messages.create({
+      model: CLAUDE_MODEL,
+      max_tokens: 4000,
+      ...FALLBACK,
+      output_config: { effort: "low", format: { type: "json_schema", schema } },
+      system: PARSE_SYSTEM,
+      messages: [{ role: "user", content: prompt }],
+    });
+    if (response.stop_reason === "refusal") throw new Error("AI so'rovni rad etdi");
+    json = textOf(response);
+  }
 
-  if (response.stop_reason === "refusal") throw new Error("AI so'rovni rad etdi");
-  const parsed = JSON.parse(textOf(response));
-  const drafts = parsed.transactions.map((t) => resolveDraft(db, t));
-  return { drafts, engine: "claude" };
+  const parsed = JSON.parse(json || "{}");
+  const drafts = (parsed.transactions || []).map((t) => resolveDraft(db, t));
+  return { drafts, engine: ai };
 }
 
 // Nomlarni ID'larga bog'lash
@@ -363,25 +424,68 @@ function runTool(db, name, input, uid, save) {
   return { error: "Noma'lum tool" };
 }
 
-async function chat(db, history, { uid, save }) {
-  const api = getClient();
-  if (!api) {
+async function chat(db, history, opts) {
+  const ai = provider();
+  if (!ai) {
     return {
       reply:
-        "AI chat ishlashi uchun serverda ANTHROPIC_API_KEY o'rnatilishi kerak. `.env` fayliga kalitni qo'shing va serverni qayta ishga tushiring.",
+        "AI chat ishlashi uchun serverda GEMINI_API_KEY (bepul, aistudio.google.com) yoki ANTHROPIC_API_KEY o'rnatilishi kerak.",
       changed: false,
     };
   }
-
-  const messages = history
+  const msgs = history
     .filter((m) => m.role === "user" || m.role === "assistant")
     .map((m) => ({ role: m.role, content: String(m.content) }));
   // Joriy ma'lumotlar holati — oxirgi foydalanuvchi xabaridan oldin kontekst sifatida.
+  const context = "<moliyaviy_malumotlar>\n" + JSON.stringify(snapshot(db)) + "\n</moliyaviy_malumotlar>";
+  return ai === "gemini" ? chatGemini(db, msgs, context, opts) : chatClaude(db, msgs, context, opts);
+}
+
+async function chatGemini(db, msgs, context, { uid, save }) {
+  const last = msgs.pop();
+  const contents = msgs.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+  contents.push({ role: "user", parts: [{ text: context }, { text: last.content }] });
+  const tools = [
+    {
+      functionDeclarations: CHAT_TOOLS(db).map((t) => ({
+        name: t.name,
+        description: t.description,
+        parametersJsonSchema: geminiSchema(t.input_schema),
+      })),
+    },
+  ];
+
+  let changed = false;
+  for (let i = 0; i < 8; i++) {
+    const res = await geminiGenerate({ contents, config: { systemInstruction: CHAT_SYSTEM, tools } });
+    const calls = res.functionCalls || [];
+    if (!calls.length) return { reply: (res.text || "").trim() || "Javob olinmadi, savolni boshqacha yozib ko'ring.", changed };
+
+    contents.push(res.candidates[0].content);
+    contents.push({
+      role: "user",
+      parts: calls.map((c) => {
+        let response;
+        try {
+          response = { result: runTool(db, c.name, c.args || {}, uid, save) };
+          if (c.name === "add_transactions") changed = true;
+        } catch (e) {
+          response = { error: String(e.message) };
+        }
+        return { functionResponse: { ...(c.id ? { id: c.id } : {}), name: c.name, response } };
+      }),
+    });
+  }
+  return { reply: "Juda ko'p qadam talab qilindi, savolni soddaroq qilib bering.", changed };
+}
+
+async function chatClaude(db, msgs, context, { uid, save }) {
+  const messages = msgs;
   const last = messages.pop();
   messages.push({
     role: "user",
     content: [
-      { type: "text", text: "<moliyaviy_malumotlar>\n" + JSON.stringify(snapshot(db)) + "\n</moliyaviy_malumotlar>" },
+      { type: "text", text: context },
       { type: "text", text: last.content },
     ],
   });
@@ -389,8 +493,8 @@ async function chat(db, history, { uid, save }) {
   const tools = CHAT_TOOLS(db);
   let changed = false;
   for (let i = 0; i < 8; i++) {
-    const response = await api.beta.messages.create({
-      model: MODEL,
+    const response = await claude().beta.messages.create({
+      model: CLAUDE_MODEL,
       max_tokens: 16000,
       ...FALLBACK,
       output_config: { effort: "medium" },
@@ -425,4 +529,12 @@ async function chat(db, history, { uid, save }) {
   return { reply: "Juda ko'p qadam talab qilindi, savolni soddaroq qilib bering.", changed };
 }
 
-module.exports = { parseTransactions, chat, hasKey: () => !!getClient(), fallbackParse };
+const PROVIDER_NAMES = { gemini: "Gemini", claude: "Claude" };
+module.exports = {
+  parseTransactions,
+  chat,
+  provider,
+  providerName: () => PROVIDER_NAMES[provider()] || null,
+  hasKey: () => !!provider(),
+  fallbackParse,
+};
