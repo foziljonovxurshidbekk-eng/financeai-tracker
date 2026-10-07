@@ -30,6 +30,9 @@ jobs:
           cp -r public/* _site/
           cp node_modules/chart.js/dist/chart.umd.min.js _site/vendor/chart.js/
           touch _site/.nojekyll
+          # Brauzer keshi eski fayllarni ko'rsatmasligi uchun versiya qo'shamiz
+          v="${GITHUB_SHA::7}"
+          sed -i -e "s|href=\"styles.css\"|href=\"styles.css?v=$v\"|" -e "s|src=\"config.js\"|src=\"config.js?v=$v\"|" -e "s|src=\"app.js\"|src=\"app.js?v=$v\"|" _site/index.html
       - name: gh-pages branch'iga joylash
         run: |
           cd _site
