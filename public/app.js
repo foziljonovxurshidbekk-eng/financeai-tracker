@@ -1097,6 +1097,10 @@ async function settings(page) {
         </div>`).join("")}
     </div>
     <div class="card glass" style="margin-top:18px">
+      <h3>Ko'rinish</h3><p class="sub">Saytning rang mavzusi</p>
+      ${seg("theme", [["dark", "To'q (liquid glass)"], ["light", "Kunduzgi"]], document.documentElement.dataset.theme)}
+    </div>
+    <div class="card glass" style="margin-top:18px">
       <h3>Ma'lumotlar</h3><p class="sub">Zaxira nusxa oling yoki demo ma'lumot bilan sinab ko'ring</p>
       <div class="toolbar">
         <button class="btn" id="exp">⬇ Eksport (JSON)</button>
@@ -1124,6 +1128,7 @@ async function settings(page) {
     if (!confirm("Kategoriya o'chirilsinmi? Operatsiyalar 'Kategoriyasiz' bo'lib qoladi.")) return;
     await api("/categories/" + b.dataset.cdel, { method: "DELETE" }); await refresh(); route();
   }));
+  bindSeg(page, "theme", (v) => { applyTheme(v, true); route(); });
   $("#exp").onclick = () => download(`glass-finance-${today()}.json`, JSON.stringify(stripStats(S.data), null, 2), "application/json");
   $("#exCsv").onclick = () => {
     const rows = [["Sana", "Turi", "Bo'lim", "Kategoriya", "Summa", "Loyiha", "Xodim", "Izoh"]].concat(
@@ -1189,15 +1194,15 @@ function renderLogin() {
 }
 
 // ================= INIT =================
-function applyTheme(t) {
+// Foydalanuvchi o'zi tanlagan mavzu "theme2" da saqlanadi (eski avtomatik saqlangan "theme" e'tiborsiz)
+function applyTheme(t, remember) {
   document.documentElement.dataset.theme = t;
-  localSet("theme", t);
+  if (remember) localSet("theme2", t);
   chartDefaults();
 }
 (function init() {
-  const saved = localGet("theme", null);
-  applyTheme(saved || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"));
-  $("#themeBtn").onclick = () => { applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"); route(); };
+  applyTheme(localGet("theme2", null) || "dark"); // standart — to'q liquid glass
+  $("#themeBtn").onclick = () => { applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true); route(); };
   $("#fab").onclick = () => quickModal(true);
   $("#fab").classList.add("liquid");
   window.addEventListener("hashchange", route);
