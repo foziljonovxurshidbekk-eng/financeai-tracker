@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 const banner = `// Avtomatik yaratilgan fayl — tahrirlamang. Manba: edge/main.js va server/. Qayta yig'ish: npm run build:edge
 import { createRequire as __createRequire } from "node:module";
 import __nodeProcess from "node:process";
+import { Buffer } from "node:buffer";
 const require = __createRequire(import.meta.url);
 // process.env ni o'zgartirib bo'ladigan nusxa (sozlamalar bazadan yuklanadi)
 const __env = { ...__nodeProcess.env };
