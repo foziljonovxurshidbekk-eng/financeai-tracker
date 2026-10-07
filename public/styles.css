@@ -127,6 +127,7 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-2); font-weight: 500; transition: background .2s, color .2s, transform .2s;
   position: relative;
 }
+#nav a b.short { display: none; }
 #nav a i { font-style: normal; width: 22px; text-align: center; font-size: 17px; opacity: .9; }
 #nav a:hover { background: var(--glass); color: var(--text); }
 #nav a.active {
@@ -136,7 +137,7 @@ a { color: inherit; text-decoration: none; }
 }
 /* Kompyuterda ovozli qo'shish tugmasi menyuda — kontent ustiga chiqmaydi; telefonda pastki o'ngdagi tugma */
 .side-voice { margin-top: auto; margin-bottom: 14px; justify-content: center; }
-@media (min-width: 821px) { .fab { display: none; } }
+@media (min-width: 821px) { .fab.fab { display: none; } }
 @media (max-width: 820px) { .sidebar .side-voice { display: none; } }
 .sidebar-foot { margin-top: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 6px; }
 
@@ -209,6 +210,17 @@ input, select, textarea {
 }
 select option { background: #1a2036; color: #fff; }
 :root[data-theme="light"] select option { background: #fff; color: #111; }
+/* Safari/Chrome'ning standart select ko'rinishi o'rniga shishasimon */
+select {
+  -webkit-appearance: none; appearance: none; padding-right: 34px; text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23aab3d6' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 13px center; background-size: 12px 8px;
+}
+:root[data-theme="light"] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23626a85' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+input[type="month"], input[type="date"] { -webkit-appearance: none; appearance: none; min-height: 42px; }
+input::-webkit-date-and-time-value { text-align: left; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,156,255,.25); }
 textarea { resize: vertical; min-height: 90px; }
 .toolbar select, .toolbar input:not([type="month"]) { width: auto; min-width: 150px; max-width: 260px; }
@@ -337,7 +349,11 @@ tbody tr:hover { background: rgba(255,255,255,.035); }
   .sidebar { position: fixed; top: auto; bottom: 12px; left: 12px; right: 12px; height: auto; z-index: 40; padding: 6px; flex-direction: row; border-radius: 22px; }
   .brand, .sidebar-foot { display: none; }
   #nav { flex-direction: row; justify-content: space-around; width: 100%; }
-  #nav a { flex-direction: column; gap: 2px; padding: 7px 6px; font-size: 10.5px; flex: 1; text-align: center; }
+  .sidebar { background: rgba(14, 17, 34, .78); }
+  :root[data-theme="light"] .sidebar { background: rgba(255, 255, 255, .82); }
+  #nav a { flex-direction: column; gap: 2px; padding: 7px 2px; font-size: 10.5px; flex: 1 1 0; min-width: 0; text-align: center; }
+  #nav a span { display: none; }
+  #nav a b.short { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   #nav a i { font-size: 18px; }
   .fab { bottom: 96px; right: 18px; width: 56px; height: 56px; }
   .page { padding-bottom: 120px; }
