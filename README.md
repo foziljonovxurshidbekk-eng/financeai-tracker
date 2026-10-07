@@ -76,6 +76,15 @@ curl -fsSL https://raw.githubusercontent.com/foziljonovxurshidbekk-eng/financeai
 
 Bu skript Node.js'ni o'rnatadi, `.env` faylini yaratadi va ilovani systemd xizmati sifatida ishga tushiradi. Bundan tashqari, `https://<IP>.sslip.io` manzilida HTTPS sozlaydi va har kuni zaxira nusxa oladi.
 
+### Supabase Edge Function'ni yangilash
+
+`npm run build:edge` buyrug'i `supabase/functions/glass/app.js` (butun server kodi) va `index.js` fayllarini yaratadi. Ikkala usul bor:
+- **Supabase CLI:** `supabase functions deploy glass --no-verify-jwt`. Bu usul ikkala faylni yuklaydi.
+- **Kichik yuklovchi bilan (hozirgi usul):** o'zgarishlarni push qiling, so'ng Supabase'dagi `index.js` faylida `app.js` manzilidagi commit raqamini yangisiga almashtirib, funksiyani qayta joylang:
+  `import { start } from "https://raw.githubusercontent.com/foziljonovxurshidbekk-eng/financeai-tracker/<commit>/supabase/functions/glass/app.js";`
+
+Sozlamalar (`GEMINI_API_KEY`, `BOT_TOKEN`, `APP_PASSWORD`, `TELEGRAM_ALLOWED_IDS`) Edge Function secrets'da yoki `glass_finance` jadvalidagi `id = 'config'` qatorida saqlanadi. Bu jadval RLS bilan himoyalangan, uni faqat server o'qiy oladi.
+
 ## Testlar
 
 ```bash
