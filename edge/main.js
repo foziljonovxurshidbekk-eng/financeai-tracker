@@ -1,5 +1,6 @@
-// Supabase Edge Function kirish nuqtasi (Deno).
-// `npm run build:edge` buni server/ kodi bilan birga supabase/functions/glass/index.js ga yig'adi.
+// Supabase Edge Function ilovasi (Deno).
+// `npm run build:edge` buni server/ kodi bilan birga supabase/functions/glass/app.js ga yig'adi.
+// Kirish nuqtasi (index.js) npm kutubxonalarini yuklab, start() ni chaqiradi.
 //
 //   https://<ref>.supabase.co/functions/v1/glass/api/...     — sayt API'si (parol: x-app-key)
 //   https://<ref>.supabase.co/functions/v1/glass/telegram    — Telegram webhook
@@ -7,15 +8,10 @@
 //
 // Sozlamalar (GEMINI_API_KEY, BOT_TOKEN, APP_PASSWORD, ...) Edge Function secrets'dan
 // yoki glass_finance jadvalidagi id='config' qatoridan olinadi (jadval faqat server kaliti bilan o'qiladi).
-import * as genai from "npm:@google/genai@2.27.0";
-import { Telegraf, Markup } from "npm:telegraf@4.16.3";
 import deps from "../server/deps.js";
 import db from "../server/db.js";
 import api from "../server/api.js";
 import bot from "../server/bot.js";
-
-deps.set("@google/genai", genai);
-deps.set("telegraf", { Telegraf, Markup });
 
 const FN = "glass";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
@@ -95,7 +91,14 @@ async function processUpdate(update) {
   await withData(() => b.handleUpdate(update));
 }
 
-Deno.serve(async (req) => {
+// libs = { genai, Telegraf, Markup } — kirish faylida npm: orqali yuklanadi
+export function start({ genai, Telegraf, Markup }) {
+  deps.set("@google/genai", genai);
+  deps.set("telegraf", { Telegraf, Markup });
+  Deno.serve(handle);
+}
+
+async function handle(req) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   const url = new URL(req.url);
   const path = url.pathname.replace(new RegExp(`^(/functions/v1)?/${FN}`), "") || "/";
@@ -150,4 +153,4 @@ Deno.serve(async (req) => {
     console.error(e);
     return json({ error: e.message || "Server xatosi" }, 500);
   }
-});
+}

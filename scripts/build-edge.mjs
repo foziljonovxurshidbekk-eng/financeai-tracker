@@ -3,18 +3,26 @@
 import { build } from "esbuild";
 import { readFileSync, writeFileSync } from "node:fs";
 
+// Node built-in modullari statik import qilinadi (createRequire masofaviy URL'dan yuklanganda ishlamaydi)
 const banner = `// Avtomatik yaratilgan fayl — tahrirlamang. Manba: edge/main.js va server/. Qayta yig'ish: npm run build:edge
-import { createRequire as __createRequire } from "node:module";
+import * as __fs from "node:fs";
+import * as __path from "node:path";
+import * as __crypto from "node:crypto";
 import __nodeProcess from "node:process";
 import { Buffer } from "node:buffer";
-const require = __createRequire(import.meta.url);
+const __builtins = { fs: __fs, path: __path, crypto: __crypto };
+const require = (name) => {
+  const m = __builtins[String(name).replace(/^node:/, "")];
+  if (!m) throw new Error("Edge muhitida mavjud emas: " + name);
+  return m;
+};
 // process.env ni o'zgartirib bo'ladigan nusxa (sozlamalar bazadan yuklanadi)
 const __env = { ...__nodeProcess.env };
 const process = new Proxy(__nodeProcess, { get: (t, k) => (k === "env" ? __env : Reflect.get(t, k)) });`;
 
 await build({
   entryPoints: ["edge/main.js"],
-  outfile: "supabase/functions/glass/index.js",
+  outfile: "supabase/functions/glass/app.js",
   bundle: true,
   format: "esm",
   platform: "node",
@@ -29,7 +37,21 @@ await build({
 });
 // Bosh bo'shliqlarni olib tashlaymiz (hajm kichrayadi, qatorlar o'qiladigan qoladi).
 // Ko'p qatorli template literal ichidagi qatorlar bo'shliq bilan boshlanmasligi tekshiriladi.
-const out = "supabase/functions/glass/index.js";
+const out = "supabase/functions/glass/app.js";
 const code = readFileSync(out, "utf8");
 writeFileSync(out, code.split("\n").map((l) => l.trimStart()).join("\n"));
 console.log("✓ " + out);
+
+// Kirish nuqtasi: npm kutubxonalari + ilova. Mahalliy/CLI deploy uchun ./app.js;
+// MCP orqali deploy qilinganda app.js GitHub'dagi aniq commit'dan olinadi (README'ga qarang).
+writeFileSync(
+  "supabase/functions/glass/index.js",
+  `// Avtomatik yaratilgan fayl — tahrirlamang (npm run build:edge)
+import * as genai from "npm:@google/genai@2.27.0";
+import { Telegraf, Markup } from "npm:telegraf@4.16.3";
+import { start } from "./app.js";
+
+start({ genai, Telegraf, Markup });
+`
+);
+console.log("✓ supabase/functions/glass/index.js");
