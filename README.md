@@ -50,13 +50,15 @@ Render'ning bepul tarifida disk saqlanmaydi va servis uxlab qoladi. Shuning uchu
 - `DATABASE_URL` berilsa, ma'lumotlar bepul **Neon Postgres** bazasida saqlanadi va servis qayta ishga tushganda ham yo'qolmaydi;
 - Render'da Telegram bot **webhook** rejimida ishlaydi: kelgan xabar uxlab yotgan servisni o'zi uyg'otadi.
 
-**1. Baza (Neon, 2 daqiqa).** https://neon.tech saytida GitHub orqali ro'yxatdan o'ting va **Create project** tugmasini bosing. Keyin **Connect** oynasidagi `postgresql://...` bilan boshlanadigan ulanish manzilini nusxalab oling.
+**1. Baza.** Supabase yoki Neon'dan birini tanlang (ikkalasi ham bepul).
+- **Supabase:** loyihangizda **Connect** tugmasini bosing, **Session pooler** bo'limidagi `postgresql://postgres.xxxx:[YOUR-PASSWORD]@aws-...pooler.supabase.com:5432/postgres` manzilni nusxalang va `[YOUR-PASSWORD]` o'rniga baza parolini yozing. Parol esingizda bo'lmasa, *Project Settings → Database → Reset database password* orqali yangisini o'rnating. Ilova jadvalni o'zi yaratadi va unga RLS yoqadi, shuning uchun jadval Supabase'ning ochiq REST API'si orqali ko'rinmaydi.
+- **Neon:** https://neon.tech saytida GitHub orqali ro'yxatdan o'ting va **Create project** tugmasini bosing. Keyin **Connect** oynasidagi `postgresql://...` bilan boshlanadigan ulanish manzilini nusxalab oling.
 
 **2. Sayt (Render).** https://render.com saytida **New → Blueprint** ni tanlang va `financeai-tracker` repozitoriysini ko'rsating. Render `render.yaml` faylini o'qiydi va quyidagi qiymatlarni so'raydi:
 
 | Kalit | Qiymat |
 |---|---|
-| `DATABASE_URL` | Neon'dan olingan `postgresql://...` manzil |
+| `DATABASE_URL` | Supabase (Session pooler) yoki Neon'dan olingan `postgresql://...` manzil |
 | `APP_PASSWORD` | Saytga kirish paroli (o'zingiz o'ylab toping) |
 | `ANTHROPIC_API_KEY` | https://console.anthropic.com dan olingan kalit (bo'sh qolsa, AI offline rejimda ishlaydi) |
 | `BOT_TOKEN` | @BotFather bergan token |

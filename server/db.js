@@ -75,6 +75,8 @@ async function init({ pool } = {}) {
     });
   }
   await pool.query("CREATE TABLE IF NOT EXISTS glass_finance (id text PRIMARY KEY, data jsonb NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())");
+  // Supabase: jadval REST API orqali ochilib qolmasin (siyosatsiz RLS = faqat server ulanishi o'qiy oladi)
+  await pool.query("ALTER TABLE glass_finance ENABLE ROW LEVEL SECURITY");
   const r = await pool.query("SELECT data FROM glass_finance WHERE id = 'main'");
   pg = { pool, chain: Promise.resolve() };
   if (r.rows.length) {
@@ -84,6 +86,8 @@ async function init({ pool } = {}) {
     save();
   }
   await flush();
+  // Supabase bepul loyihalari 7 kun faolsiz qolsa pauza qilinadi — kuniga bir marta bazaga murojaat
+  setInterval(() => pool.query("SELECT 1").catch(() => {}), 24 * 3600 * 1000).unref();
   return cache;
 }
 
