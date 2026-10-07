@@ -82,6 +82,7 @@ function startBot({ telegram } = {}) {
   bot.start((ctx) =>
     ctx.reply(
       `Salom! Men <b>Glass Finance</b> botiman 💎\n\n` +
+        `🎙 Ovozli xabar ham yuborishingiz mumkin.\n\n` +
         `<b>Operatsiya qo'shish</b> — oddiy yozing:\n<i>tushlikka 85 ming, Oqtepa reklamaga 2 mln, Dilshodga 3 mln berdim</i>\n\n` +
         `<b>Savol berish</b> — savol yozing yoki boshiga ? qo'ying:\n<i>? qaysi loyiha eng foydali</i>\n\n` +
         `/hisobot — bu oygi qisqa hisobot\n/yangi — suhbatni yangidan boshlash`,
@@ -95,16 +96,33 @@ function startBot({ telegram } = {}) {
     return ctx.reply("Suhbat tozalandi ✓");
   });
 
-  bot.on("voice", (ctx) =>
-    ctx.reply(
-      "🎙 Telegram ovozli xabarini hozircha tushunmayman. Telefon klaviaturasidagi mikrofon tugmasi bilan matn qilib yuboring " +
-        "yoki saytdagi 🎙 tugmasidan foydalaning."
-    )
-  );
+  bot.on("voice", async (ctx) => {
+    if (ai.provider() !== "gemini") {
+      return ctx.reply(
+        "🎙 Ovozli xabarni tushunish uchun serverda GEMINI_API_KEY kerak. Hozircha matn qilib yuboring (klaviaturadagi mikrofon tugmasi)."
+      );
+    }
+    try {
+      await ctx.sendChatAction("typing");
+      const link = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
+      const audio = Buffer.from(await (await fetch(link)).arrayBuffer());
+      const text = await ai.transcribe(audio, ctx.message.voice.mime_type || "audio/ogg");
+      if (!text) return ctx.reply("Ovozni tushunolmadim, qaytadan yuboring.");
+      await ctx.reply(`🎙 «${text}»`);
+      return handleText(ctx, text);
+    } catch (e) {
+      console.error(e);
+      return ctx.reply("⚠️ Ovozni o'qib bo'lmadi: " + e.message);
+    }
+  });
 
-  bot.on("text", async (ctx) => {
+  bot.on("text", (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) return;
+    return handleText(ctx, text);
+  });
+
+  async function handleText(ctx, text) {
     await ctx.sendChatAction("typing");
     const data = db.load();
     try {
@@ -138,7 +156,7 @@ function startBot({ telegram } = {}) {
       console.error(e);
       return ctx.reply("⚠️ Xatolik: " + e.message);
     }
-  });
+  }
 
   bot.action(/^save:(.+)$/, async (ctx) => {
     const p = pending.get(ctx.match[1]);

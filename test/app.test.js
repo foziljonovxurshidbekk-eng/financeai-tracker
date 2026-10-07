@@ -210,7 +210,7 @@ test("Gemini: tahlil (JSON) va chat (function calling), model 404 bo'lsa zaxira 
     assert.equal(d.categories.find((c) => c.id === parsed.drafts[0].categoryId).name, "Kafe va restoran");
     const schemaSent = calls.find((c) => c.json.generationConfig?.responseJsonSchema).json.generationConfig.responseJsonSchema;
     assert.ok(!JSON.stringify(schemaSent).includes("additionalProperties"));
-    assert.ok(calls.some((c) => c.url.includes("gemini-2.5-flash")), "zaxira modelga o'tdi");
+    assert.ok(calls.some((c) => c.url.includes("gemini-3.6-flash")), "zaxira modelga o'tdi");
 
     let saved = 0;
     const r = await ai.chat(d, [{ role: "user", content: "benzinga 200 ming ketdi" }], { uid: () => "x" + saved, save: () => saved++ });

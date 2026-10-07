@@ -73,6 +73,8 @@ async function refresh() {
   const badge = $("#aiBadge");
   badge.textContent = S.data.aiEnabled ? `✦ ${S.data.aiProvider} ulangan` : "AI offline";
   badge.className = "pill " + (S.data.aiEnabled ? "ok" : "warn");
+  const navAi = $('#nav a[data-page="ai"] span');
+  if (navAi) navAi.textContent = S.data.aiProvider ? `${S.data.aiProvider} AI` : "AI yordamchi";
 }
 
 function toast(msg, err) {
@@ -192,6 +194,8 @@ async function dashboard(page) {
         : kpi("Bu oy oyliklar", money(d.payroll.accrued), `To'langan ${compact(d.payroll.paid)} · qarz ${compact(d.payroll.debt)}`, "var(--accent-2)")}
     </div>
 
+    ${aiAdviceCard()}
+
     <div class="grid cols-2" style="margin-top:18px">
       <div class="card glass">
         <div class="card-head"><div><h3>Oylar bo'yicha kirim va chiqim</h3><p class="sub">Har oy qancha kirdi va qancha sarflandi</p></div></div>
@@ -246,6 +250,7 @@ async function dashboard(page) {
   $$("[data-act=add]", page).forEach((b) => b.addEventListener("click", () => txModal()));
   $$("[data-act=demo]", page).forEach((b) => b.addEventListener("click", loadDemo));
   bindTxRows(page);
+  bindAiAdvice(page, range);
 
   // Diagrammalar
   const income = cssVar("--income"), expense = cssVar("--expense"), accent = cssVar("--accent");
@@ -344,6 +349,48 @@ async function dashboard(page) {
       },
     });
   }
+}
+
+// ---------- Dashboard: AI tahlil kartasi ----------
+function aiAdviceCard() {
+  const name = S.data.aiProvider || "AI";
+  const saved = localGet("advice." + S.scope + "." + S.period, "");
+  return `<div class="card glass" style="margin-top:18px" id="aiCard">
+    <div class="card-head">
+      <div><h3>✦ ${esc(name)} tahlili va maslahatlari</h3>
+        <p class="sub">${S.data.aiEnabled
+          ? "Loyihalar, kirim-chiqimlar, oyliklar va diagrammalardagi raqamlar asosida qisqa xulosa"
+          : "AI ulanmagan — Sozlamalar sahifasidagi ko'rsatmaga qarang"}</p></div>
+      <button class="btn primary" id="aiRun" ${S.data.aiEnabled ? "" : "disabled"}>${saved ? "↻ Yangilash" : "✦ Tahlil qilish"}</button>
+    </div>
+    <div id="aiOut" class="msg assistant" style="max-width:none;${saved ? "" : "display:none"}">${saved ? md(saved) : ""}</div>
+  </div>`;
+}
+
+function bindAiAdvice(page, range) {
+  const btn = $("#aiRun", page);
+  if (!btn) return;
+  btn.onclick = async () => {
+    const out = $("#aiOut", page);
+    out.style.display = "";
+    out.innerHTML = `<div class="typing"><span></span><span></span><span></span></div>`;
+    btn.disabled = true;
+    const period = PERIODS.find((p) => p[0] === S.period)[1];
+    const prompt =
+      `Dashboard tahlili. Bo'lim: ${scopeName[S.scope]}, davr: ${period}` +
+      (range.from ? ` (${range.from} — ${range.to})` : "") +
+      `. Qisqa va aniq yoz (raqamlar bilan): 1) umumiy holat va trend, 2) eng katta xarajatlar va g'ayrioddiy o'zgarishlar, ` +
+      `3) loyihalar marjasi — qaysi biri foydali, qaysi biri xavfli, 4) xodimlar va oyliklar bo'yicha qarzlar, 5) 3-5 ta amaliy maslahat.`;
+    try {
+      const r = await api("/ai/chat", { method: "POST", body: { messages: [{ role: "user", content: prompt }] } });
+      out.innerHTML = md(r.reply);
+      localSet("advice." + S.scope + "." + S.period, r.reply);
+      btn.textContent = "↻ Yangilash";
+    } catch (e) {
+      out.innerHTML = `<p class="down">⚠️ ${esc(e.message)}</p>`;
+    }
+    btn.disabled = false;
+  };
 }
 
 function kpi(label, value, hint, color) {
@@ -951,6 +998,7 @@ const SUGGESTIONS = [
   "Xodimlarga qancha qarzimiz bor?",
   "Shaxsiy xarajatlarimni qanday kamaytirsam bo'ladi?",
   "Keyingi oy uchun pul oqimi prognozini ber",
+  "Diagrammalardagi trendlarni tushuntirib ber",
 ];
 
 async function aiPage(page) {

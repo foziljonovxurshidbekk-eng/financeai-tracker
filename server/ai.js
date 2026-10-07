@@ -5,8 +5,15 @@ const { projectStats, employeeStats, dashboard } = require("./finance");
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-opus-5-5";
 // Rad etilgan (refusal) so'rovlar server tomonida avtomatik boshqa modelda qayta ishlanadi.
 const FALLBACK = { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" };
-// "gemini-flash-latest" — Google'ning eng so'nggi Flash modeliga ishora qiladi (bepul tarifda mavjud)
-const GEMINI_MODELS = [process.env.GEMINI_MODEL || "gemini-flash-latest", "gemini-2.5-flash"];
+// "gemini-flash-latest" — Google'ning eng so'nggi Flash modeli. Band (503) yoki topilmasa (404) keyingisiga o'tiladi.
+const GEMINI_MODELS = [
+  process.env.GEMINI_MODEL || "gemini-flash-latest",
+  "gemini-3.6-flash",
+  "gemini-3-flash-preview",
+  "gemini-flash-lite-latest",
+];
+const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS) || 25000;
+let geminiPreferred = null; // oxirgi muvaffaqiyatli model — keyingi so'rovda birinchi sinaladi
 
 function provider() {
   const hasGemini = !!process.env.GEMINI_API_KEY;
@@ -29,24 +36,33 @@ function gemini() {
   const { GoogleGenAI } = require("@google/genai");
   geminiClient ??= new GoogleGenAI({
     apiKey: process.env.GEMINI_API_KEY,
-    ...(process.env.GEMINI_BASE_URL ? { httpOptions: { baseUrl: process.env.GEMINI_BASE_URL } } : {}),
+    httpOptions: {
+      timeout: GEMINI_TIMEOUT_MS,
+      ...(process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : {}),
+    },
   });
   return geminiClient;
 }
 
-// Model nomi topilmasa (404) keyingisiga o'tadi
+// Model band, topilmadi yoki vaqtincha xato bo'lsa — keyingi modelga o'tadi
 async function geminiGenerate(params) {
   let lastErr;
-  for (const model of [...new Set(GEMINI_MODELS)]) {
+  for (const model of [...new Set([geminiPreferred, ...GEMINI_MODELS].filter(Boolean))]) {
     try {
-      return await gemini().models.generateContent({ ...params, model });
+      const res = await gemini().models.generateContent({ ...params, model });
+      geminiPreferred = model;
+      return res;
     } catch (e) {
       lastErr = e;
-      if (e?.status !== 404) break;
+      // 400/401/403 — kalit yoki so'rov xatosi, boshqa model ham yordam bermaydi
+      if ([400, 401, 403].includes(e?.status)) break;
+      if (geminiPreferred === model) geminiPreferred = null;
+      console.warn(`Gemini ${model}: ${e?.status || e?.name || "xato"}, keyingi model sinab ko'rilmoqda`);
     }
   }
-  if (lastErr?.status === 429) throw new Error("Gemini bepul limiti tugadi, birozdan keyin urinib ko'ring");
-  throw lastErr;
+  if (lastErr?.status === 429) throw new Error("Gemini limiti tugadi, birozdan keyin urinib ko'ring");
+  if ([400, 401, 403].includes(lastErr?.status)) throw new Error("Gemini kaliti noto'g'ri yoki ruxsat yo'q (GEMINI_API_KEY ni tekshiring)");
+  throw new Error("Gemini hozir javob bermayapti, bir daqiqadan keyin urinib ko'ring");
 }
 
 // Gemini JSON Schema'ning kichik to'plamini qabul qiladi — ortiqcha kalitlarni olib tashlaymiz
@@ -263,6 +279,7 @@ const CHAT_SYSTEM =
   "- Tahlil qilganda aniq raqamlar, foizlar, marja va tavsiyalar ber. Qisqa va lo'nda bo'l, kerak bo'lsa ro'yxat/jadval ishlat.\n" +
   "- Batafsil ma'lumot kerak bo'lsa query_transactions tool'idan foydalan.\n" +
   "- Foydalanuvchi yangi kirim/chiqim qo'shishni so'rasa, add_transactions tool'ini chaqir va nima qo'shilganini aytib ber.\n" +
+  "- employees[].balance > 0 bo'lsa — agentlik shu xodimga qarz (unga to'lash kerak); < 0 bo'lsa — xodimga avans berilgan.\n" +
   "- Ma'lumotda yo'q narsani o'ylab topma.";
 
 function snapshot(db) {
@@ -529,6 +546,24 @@ async function chatClaude(db, msgs, context, { uid, save }) {
   return { reply: "Juda ko'p qadam talab qilindi, savolni soddaroq qilib bering.", changed };
 }
 
+// Ovozli xabarni matnga aylantirish (faqat Gemini — audio qabul qiladi)
+async function transcribe(buffer, mimeType = "audio/ogg") {
+  if (provider() !== "gemini") return null;
+  const res = await geminiGenerate({
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { inlineData: { mimeType, data: Buffer.from(buffer).toString("base64") } },
+          { text: "Bu ovozli xabarni so'zma-so'z matnga aylantir (o'zbek, rus yoki aralash til bo'lishi mumkin). Raqamlarni raqam bilan yoz. Faqat matnni qaytar." },
+        ],
+      },
+    ],
+    config: { temperature: 0 },
+  });
+  return (res.text || "").trim();
+}
+
 const PROVIDER_NAMES = { gemini: "Gemini", claude: "Claude" };
 module.exports = {
   parseTransactions,
@@ -536,5 +571,6 @@ module.exports = {
   provider,
   providerName: () => PROVIDER_NAMES[provider()] || null,
   hasKey: () => !!provider(),
+  transcribe,
   fallbackParse,
 };

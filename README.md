@@ -8,7 +8,7 @@ Marketing agentligi egasi uchun moliya paneli: shaxsiy va agentlik kirim-chiqiml
 
 | Bo'lim | Nima qiladi |
 |---|---|
-| **Dashboard** | Kirim, chiqim, sof foyda, rentabellik. Oylar bo'yicha diagramma, chiqimlar tarkibi (donut), foyda dinamikasi, agentlik va shaxsiy moliya alohida, loyihalar marjasi, kategoriyalar jadvali. Filtrlar: Hammasi / Agentlik / Shaxsiy va davr (bu oy, 3 oy, 6 oy, yil). |
+| **Dashboard** | **Gemini AI tahlili** kartasi: bitta tugma bilan butun moliyaviy holat, loyihalar marjasi, oyliklar va diagrammalar bo'yicha xulosa va maslahatlar. Kirim, chiqim, sof foyda, rentabellik. Oylar bo'yicha diagramma, chiqimlar tarkibi (donut), foyda dinamikasi, agentlik va shaxsiy moliya alohida, loyihalar marjasi, kategoriyalar jadvali. Filtrlar: Hammasi / Agentlik / Shaxsiy va davr (bu oy, 3 oy, 6 oy, yil). |
 | **Kirim-chiqim** | Qo'lda kiritish, qidiruv va filtrlar. **Tezkor AI kiritish**: matn yozasiz yoki 🎙 orqali gapirasiz (o'zbek/rus/ingliz), AI bitta gapdagi bir nechta operatsiyani ajratib oladi. Har biri uchun summa, kirim/chiqim, bo'lim, kategoriya, sana, loyiha va xodimni o'zi aniqlaydi. Saqlashdan oldin hammasini tekshirib, tuzatishingiz mumkin. |
 | **Loyihalar** | Har bir loyiha uchun smeta: har bir ish yoki xizmatning soni, tannarxi, sotuv narxi, foydasi va marjasi. Fakt bo'yicha: daromad, tannarx (loyihaga bog'langan barcha chiqimlar), foyda, marja, ustama, mijozning qarzi. "Reja va fakt" va tannarx tarkibi diagrammalari. |
 | **Jamoa** | Xodimlar **oylik** yoki **dona** bo'yicha (masalan, 1 reels = 250 000 so'm). Dona ishlarni kiritib borasiz, dastur hisoblangan summani o'zi chiqaradi. "To'lash" tugmasi to'lovni agentlikning ish haqi chiqimi sifatida yozadi va kerak bo'lsa loyiha tannarxiga qo'shadi. Har bir xodim bo'yicha: shu oyda hisoblangan, to'langan va umumiy qoldiq (qarzimiz yoki berilgan avans). |
@@ -26,7 +26,7 @@ Bot sayt bilan bitta bazada ishlaydi:
 
 Sozlash tartibi: @BotFather'da bot yarating va tokenni `.env` fayliga `BOT_TOKEN` qilib yozing. Serverni ishga tushirib, botga `/start` yuboring. Bot sizning ID'ingizni ko'rsatadi, uni `TELEGRAM_ALLOWED_IDS` ga yozib, serverni qayta ishga tushiring.
 
-Telegram'ning ovozli xabarlari (audio) hozircha qo'llab-quvvatlanmaydi. Ovoz bilan kiritish uchun telefon klaviaturasidagi mikrofon tugmasidan (diktovka) yoki saytdagi 🎙 tugmasidan foydalaning.
+**Ovozli xabar** yuborsangiz (Gemini ulangan bo'lsa), bot uni matnga aylantiradi va xuddi yozilgan matndek ishlaydi.
 
 ## Ishga tushirish
 
