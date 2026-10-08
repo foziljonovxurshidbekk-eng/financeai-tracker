@@ -138,7 +138,9 @@ test("Telegram bot: xabar -> tasdiqlash -> saqlash (soxta Telegram API)", async 
     assert.match(sent.at(-1).body.text, /Ruxsat yo'q/);
 
     await bot.handleUpdate({ update_id: 2, message: { message_id: 2, date: 0, from, chat, text: "taksiga 40 ming" } });
-    const msg = sent.filter((s) => s.method === "sendMessage").at(-1).body;
+    assert.ok(sent.some((s) => s.method === "setMessageReaction"), "xabarga reaksiya qo'yildi");
+    assert.ok(sent.some((s) => s.method === "sendMessage" && /Yozib olyapman/.test(s.body.text)), "holat xabari yuborildi");
+    const msg = sent.filter((s) => s.method === "editMessageText").at(-1).body; // holat xabari natijaga aylandi
     assert.match(msg.text, /40 000 so'm/);
     const data = msg.reply_markup.inline_keyboard[0][0].callback_data;
     assert.match(data, /^save:/);
@@ -158,8 +160,8 @@ test("Postgres rejimi: bazadan o'qiydi va yozadi (soxta pool)", async () => {
   const rows = new Map();
   const pool = {
     async query(sql, params) {
-      if (/^SELECT/.test(sql)) return { rows: rows.has("main") ? [{ data: JSON.parse(rows.get("main")) }] : [] };
-      if (/^INSERT/.test(sql)) rows.set("main", params[0]);
+      if (/^SELECT/.test(sql)) return { rows: rows.has(params[0]) ? [{ data: JSON.parse(rows.get(params[0])) }] : [] };
+      if (/^INSERT/.test(sql)) rows.set(params[0], params[1]);
       return { rows: [] };
     },
   };
@@ -171,6 +173,8 @@ test("Postgres rejimi: bazadan o'qiydi va yozadi (soxta pool)", async () => {
   dbPg.save();
   await dbPg.flush();
   assert.equal(JSON.parse(rows.get("main")).transactions.at(-1).id, "pg1");
+  dbPg.configure({ storeFactory: null }); // keyingi testlar yana fayl rejimida
+  dbPg.reset();
 });
 
 test("Gemini: tahlil (JSON) va chat (function calling), model 404 bo'lsa zaxira model (soxta API)", async () => {
@@ -243,4 +247,76 @@ test("aralash (oylik + dona) xodim: ikkalasi qo'shilib hisoblanadi", () => {
   // oylik xodimning dona ishlari hisobga kirmaydi
   const monthly = { id: "m1", payType: "monthly", rate: 3_000_000, startDate: month + "-01" };
   assert.equal(employeeStats(d, monthly, month).monthAccrued, 3_000_000);
+});
+
+test("bo'limlar: qo'shish, ko'chirib o'chirish, tranzaksiya tekshiruvi", async () => {
+  const api = require("../server/api");
+  const h = (method, path, body, query) => api.handle({ method, path, body, query });
+  db.reset();
+  const sc = (await h("POST", "/scopes", { name: "Restoran" })).body;
+  assert.ok(sc.id);
+  assert.equal((await h("POST", "/scopes", { name: "restoran" })).status, 400, "takroriy nom");
+  assert.ok(db.load().categories.some((c) => c.scope === sc.id && c.type === "expense"), "yangi bo'limga kategoriyalar");
+  assert.equal((await h("POST", "/transactions", { type: "expense", amount: 5000, scope: "yoq" })).status, 400);
+  assert.equal((await h("POST", "/transactions", { type: "expense", amount: 5000, scope: sc.id })).status, 200);
+  const dash = (await h("GET", "/dashboard", null, { scope: sc.id })).body;
+  assert.equal(dash.expense, 5000);
+  assert.equal(dash.scopes.find((x) => x.id === sc.id).expense, 5000);
+  assert.equal((await h("DELETE", "/scopes/" + sc.id, { moveTo: "personal" })).status, 200);
+  assert.equal(db.load().transactions[0].scope, "personal", "ma'lumot ko'chirildi");
+  assert.equal(db.load().categories.some((c) => c.scope === sc.id), false);
+  // oxirgi bo'limni o'chirib bo'lmaydi
+  await h("DELETE", "/scopes/agency", { moveTo: "personal" });
+  assert.equal((await h("DELETE", "/scopes/personal", {})).status, 400);
+});
+
+test("kirish: ega paroli, qo'shilgan foydalanuvchi alohida ma'lumot bilan, token va bekor qilish", async () => {
+  const api = require("../server/api");
+  process.env.APP_PASSWORD = "egaparol";
+  try {
+    const h = (method, path, body, key) => api.handle({ method, path, body, headers: key ? { "x-app-key": key } : {} });
+    assert.equal((await h("GET", "/state")).status, 401);
+    assert.equal((await h("POST", "/auth", { password: "xato" })).body.ok, false);
+    const owner = (await h("POST", "/auth", { password: "egaparol" })).body;
+    assert.ok(owner.ok && owner.token && owner.user.owner);
+    assert.equal((await h("GET", "/state", null, owner.token)).status, 200);
+    assert.equal((await h("GET", "/state", null, "egaparol")).status, 200, "eski usul (xom parol) ishlaydi");
+    assert.equal((await h("GET", "/state", null, owner.token + "x")).status, 401);
+
+    db.reset();
+    await h("POST", "/demo", {}, owner.token);
+    assert.equal((await h("POST", "/users", { username: "ab", password: "123456" }, owner.token)).status, 400);
+    assert.equal((await h("POST", "/users", { username: "dost", password: "12" }, owner.token)).status, 400);
+    assert.equal((await h("POST", "/users", { username: "dost", password: "dost123" }, owner.token)).status, 200);
+    assert.deepEqual((await h("GET", "/users", null, owner.token)).body.map((u) => u.name), ["dost"]);
+
+    assert.equal((await h("POST", "/auth", { username: "dost", password: "boshqa" })).body.ok, false);
+    const friend = (await h("POST", "/auth", { username: "Dost", password: "dost123" })).body;
+    assert.ok(friend.ok && friend.token && !friend.user.owner);
+    const fs1 = (await h("GET", "/state", null, friend.token)).body;
+    assert.equal(fs1.transactions.length, 0, "do'stning ma'lumoti bo'sh va alohida");
+    assert.equal(fs1.me.name, "dost");
+    assert.equal((await h("GET", "/users", null, friend.token)).status, 403, "do'st foydalanuvchilarni boshqara olmaydi");
+    await h("POST", "/transactions", { type: "income", amount: 100, scope: "personal" }, friend.token);
+    assert.equal((await h("GET", "/state", null, friend.token)).body.transactions.length, 1);
+    const ownerState = (await h("GET", "/state", null, owner.token)).body;
+    assert.ok(ownerState.transactions.length > 50, "egasi ma'lumoti o'zgarmagan");
+    assert.equal(ownerState._users, undefined, "ichki maydonlar yashirilgan");
+    // demo/reset hisobni buzmaydi
+    await h("POST", "/reset", {}, friend.token);
+    assert.equal((await h("GET", "/state", null, friend.token)).status, 200);
+
+    assert.equal((await h("DELETE", "/users/dost", null, owner.token)).status, 200);
+    assert.equal((await h("GET", "/state", null, friend.token)).status, 401, "o'chirilgan foydalanuvchi tokeni ishlamaydi");
+    assert.equal((await h("POST", "/auth", { username: "dost", password: "dost123" })).body.ok, false);
+  } finally {
+    delete process.env.APP_PASSWORD;
+  }
+});
+
+test("ovoz transkripsiyasi: shovqindan chiqqan uydirma matn rad etiladi", () => {
+  const { cleanTranscript: c } = require("../server/ai");
+  for (const bad of ["329723y824379", "EMPTY", "ha", "12 345 678", "abc12345678def", ""]) assert.equal(c(bad), "", bad);
+  assert.equal(c("tushlikka 85 ming"), "tushlikka 85 ming");
+  assert.equal(c("Dilshodga 3mln berdim"), "Dilshodga 3mln berdim");
 });

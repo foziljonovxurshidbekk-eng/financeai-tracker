@@ -103,3 +103,11 @@ server/ai.js       AI (Gemini yoki Claude): matn yoki ovozdan operatsiyalarni aj
 server/db.js       Baza: JSON fayl yoki Postgres (DATABASE_URL)
 public/            Frontend (vanilla JS + Chart.js, liquid glass CSS)
 ```
+
+
+## Bir nechta bo'lim, foydalanuvchilar, sana filtri
+
+- **Bo'limlar:** Sozlamalar → "Bo'limlar" da yangi biznes (yoki shaxsiy hisob) qo'shish, nomini o'zgartirish va o'chirish mumkin. O'chirishda operatsiyalarni boshqa bo'limga ko'chirish yoki ular bilan birga o'chirish tanlanadi.
+- **Foydalanuvchilar:** Sozlamalar → "Hisob" da ega do'stlari uchun login+parol yaratadi. Har bir foydalanuvchining ma'lumoti alohida (`glass_finance` jadvalida `u_<login>` qatori). Ega — login maydonini bo'sh qoldirib `APP_PASSWORD` bilan kiradi. Telegram bot faqat egaga ulangan.
+- **Davr filtri:** Dashboardda "Maxsus" — ixtiyoriy sana oralig'i; Kirim-chiqim sahifasida "Dan / Gacha".
+- **Telegram bot:** xabar kelishi bilan 👀 reaksiyasi va "🎧 Eshityapman…" / "✍️ Yozib olyapman…" holati chiqadi, natija chiqqach shu xabar tahrirlanadi. Shovqin/yo'taldan chiqqan uydirma matn rad etiladi.

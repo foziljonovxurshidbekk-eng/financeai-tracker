@@ -8,9 +8,10 @@ const banner = `// Avtomatik yaratilgan fayl — tahrirlamang. Manba: edge/main.
 import * as __fs from "node:fs";
 import * as __path from "node:path";
 import * as __crypto from "node:crypto";
+import * as __ah from "node:async_hooks";
 import __nodeProcess from "node:process";
 import { Buffer } from "node:buffer";
-const __builtins = { fs: __fs, path: __path, crypto: __crypto };
+const __builtins = { fs: __fs, path: __path, crypto: __crypto, async_hooks: __ah };
 const require = (name) => {
   const m = __builtins[String(name).replace(/^node:/, "")];
   if (!m) throw new Error("Edge muhitida mavjud emas: " + name);

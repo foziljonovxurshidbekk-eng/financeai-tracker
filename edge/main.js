@@ -35,14 +35,17 @@ async function rest(method, query, body) {
   if (!res.ok) throw new Error(`Supabase ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return method === "GET" ? res.json() : null;
 }
-const readRow = async (id) => (await rest("GET", `?id=eq.${id}&select=data`))[0]?.data ?? null;
+const readRow = async (id) => (await rest("GET", `?id=eq.${encodeURIComponent(id)}&select=data`))[0]?.data ?? null;
 
-const store = {
-  name: "supabase",
-  load: () => readRow("main"),
-  save: (text) =>
-    rest("POST", "?on_conflict=id", JSON.stringify([{ id: "main", data: JSON.parse(text), updated_at: new Date().toISOString() }])),
-};
+// Har bir foydalanuvchi — alohida qator (egasi: "main", boshqalar: "u_<login>")
+db.configure({
+  storeFactory: (rowId) => ({
+    name: "supabase",
+    load: () => readRow(rowId),
+    save: (text) =>
+      rest("POST", "?on_conflict=id", JSON.stringify([{ id: rowId, data: JSON.parse(text), updated_at: new Date().toISOString() }])),
+  }),
+});
 
 // --- Sozlamalar ---
 let configAt = 0;
@@ -55,19 +58,6 @@ async function loadConfig() {
     else delete process.env[k];
   }
   configAt = Date.now();
-}
-
-// Bir izolyatdagi parallel so'rovlar bitta keshdan foydalanadi; bo'sh paytda bazadan yangilanadi
-let inflight = 0;
-async function withData(fn) {
-  if (inflight === 0) await db.init({ store });
-  inflight++;
-  try {
-    return await fn();
-  } finally {
-    inflight--;
-    await db.flush();
-  }
 }
 
 // --- Telegram ---
@@ -88,7 +78,7 @@ async function processUpdate(update) {
   const b = getBot();
   if (!b) return;
   b.botInfo ??= await b.telegram.getMe();
-  await withData(() => b.handleUpdate(update));
+  await db.session("main", () => b.handleUpdate(update));
 }
 
 // libs = { genai, Telegraf, Markup } — kirish faylida npm: orqali yuklanadi
@@ -111,15 +101,13 @@ async function handle(req) {
     if (path.startsWith("/api/")) {
       let body;
       if (!["GET", "HEAD"].includes(req.method)) body = await req.json().catch(() => undefined);
-      const r = await withData(() =>
-        api.handle({
-          method: req.method,
-          path: path.slice(4),
-          query: Object.fromEntries(url.searchParams),
-          body,
-          headers: Object.fromEntries(req.headers),
-        })
-      );
+      const r = await api.handle({
+        method: req.method,
+        path: path.slice(4),
+        query: Object.fromEntries(url.searchParams),
+        body,
+        headers: Object.fromEntries(req.headers),
+      });
       return json(r.body, r.status, r.headers);
     }
 

@@ -207,10 +207,8 @@ function dashboard(db, { scope = "all", from, to } = {}) {
     categories,
     projects,
     payroll,
-    byScope: {
-      agency: scopeTotals(db.transactions, "agency", from, to),
-      personal: scopeTotals(db.transactions, "personal", from, to),
-    },
+    scopes: db.scopes.map((x) => ({ id: x.id, name: x.name, kind: x.kind, ...scopeTotals(db.transactions, x.id, from, to) })),
+    byScope: Object.fromEntries(db.scopes.map((x) => [x.id, scopeTotals(db.transactions, x.id, from, to)])),
   };
 }
 

@@ -2,6 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { AsyncLocalStorage } = require("async_hooks");
 
 const DATA_DIR = process.env.DATA_DIR || (typeof __dirname !== "undefined" ? path.join(__dirname, "..", "data") : "./data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
@@ -41,9 +42,16 @@ const DEFAULT_CATEGORIES = [
 
 const uid = () => crypto.randomBytes(6).toString("hex");
 
+// Bo'limlar (biznes yoki shaxsiy) — foydalanuvchi o'zi qo'shadi/olib tashlaydi
+const DEFAULT_SCOPES = [
+  { id: "agency", name: "Agentlik", kind: "business" },
+  { id: "personal", name: "Shaxsiy", kind: "personal" },
+];
+
 function emptyDb() {
   return {
     settings: { currency: "UZS", ownerName: "" },
+    scopes: DEFAULT_SCOPES.map((x) => ({ ...x })),
     categories: DEFAULT_CATEGORIES.map(([name, type, scope, color]) => ({
       id: uid(),
       name,
@@ -58,16 +66,33 @@ function emptyDb() {
   };
 }
 
-let cache = null;
+// Eski/yangi ma'lumotni bir xil shaklga keltirish
+function normalize(data) {
+  const d = { ...emptyDb(), ...data };
+  if (!Array.isArray(d.scopes) || !d.scopes.length) d.scopes = DEFAULT_SCOPES.map((x) => ({ ...x }));
+  d.scopes = d.scopes.map((x) => ({ kind: x.id === "personal" ? "personal" : "business", ...x }));
+  return d;
+}
 
 // --- Saqlash joyi ---
-// * store berilsa (masalan Supabase Edge Function'dagi REST store) — o'sha ishlatiladi
+// Har bir foydalanuvchining ma'lumoti alohida qator (id: "main" — egasi, "u_<login>" — boshqalar).
+// * storeFactory(rowId) berilsa — o'sha ishlatiladi (masalan Supabase Edge Function'dagi REST)
 // * DATABASE_URL yoki pool berilsa — Postgres (Supabase/Neon)
-// * aks holda — JSON fayl
+// * aks holda — JSON fayllar
 // store = { name, load(): Promise<data|null>, save(json): Promise<void> }
-let remote = null; // { store, chain }
+// Har so'rov o'z kontekstida (AsyncLocalStorage) ishlaydi, shuning uchun foydalanuvchilar aralashmaydi.
+let storeFactory = null;
+const ctxs = new Map();
+const als = new AsyncLocalStorage();
+const rowOf = (userId) => (userId === "main" ? "main" : "u_" + userId);
+function ctxFor(userId) {
+  let c = ctxs.get(userId);
+  if (!c) ctxs.set(userId, (c = { userId, rowId: rowOf(userId), cache: null, chain: Promise.resolve(), inflight: 0, loading: null }));
+  return c;
+}
+const cur = () => als.getStore() || ctxFor("main");
 
-function pgStore(pool) {
+function pgStore(pool, rowId = "main") {
   return {
     name: "postgres",
     async setup() {
@@ -78,22 +103,27 @@ function pgStore(pool) {
       setInterval(() => pool.query("SELECT 1").catch(() => {}), 24 * 3600 * 1000).unref?.();
     },
     async load() {
-      const r = await pool.query("SELECT data FROM glass_finance WHERE id = 'main'");
+      const r = await pool.query("SELECT data FROM glass_finance WHERE id = $1", [rowId]);
       if (!r.rows.length) return null;
       return typeof r.rows[0].data === "string" ? JSON.parse(r.rows[0].data) : r.rows[0].data;
     },
     save: (json) =>
       pool.query(
-        "INSERT INTO glass_finance (id, data, updated_at) VALUES ('main', $1, now()) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
-        [json]
+        "INSERT INTO glass_finance (id, data, updated_at) VALUES ($1, $2, now()) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+        [rowId, json]
       ),
   };
 }
 
-async function init({ pool, store } = {}) {
+function configure({ storeFactory: f }) {
+  storeFactory = f;
+}
+
+async function init({ pool, store, storeFactory: f } = {}) {
   const url = process.env.DATABASE_URL;
-  if (!store && !pool && !url) return load();
-  if (!store) {
+  if (f) storeFactory = f;
+  else if (store) storeFactory = () => store;
+  else if (pool || url) {
     if (!pool) {
       const { Pool } = require("./deps").get("pg");
       pool = new Pool({
@@ -102,54 +132,92 @@ async function init({ pool, store } = {}) {
         max: 3,
       });
     }
-    store = pgStore(pool);
-    await store.setup();
+    await pgStore(pool).setup();
+    storeFactory = (rowId) => pgStore(pool, rowId);
   }
-  remote = { store, chain: Promise.resolve() };
-  const data = await store.load();
-  if (data) {
-    cache = { ...emptyDb(), ...data };
-  } else {
-    cache = emptyDb();
-    save();
-  }
-  await flush();
-  return cache;
+  if (!storeFactory) return load();
+  const c = ctxFor("main");
+  await loadCtx(c);
+  await c.chain;
+  return c.cache;
 }
+
+async function loadCtx(c) {
+  const store = storeFactory(c.rowId);
+  const data = await store.load();
+  if (data) c.cache = normalize(data);
+  else {
+    c.cache = emptyDb();
+    saveCtx(c);
+  }
+}
+
+// Foydalanuvchi qatori bormi (yaratmasdan tekshirish)
+async function exists(userId) {
+  if (storeFactory) return !!(await storeFactory(rowOf(userId)).load());
+  return fs.existsSync(fileFor(ctxFor(userId)));
+}
+
+// fn ni foydalanuvchi ma'lumoti kontekstida bajaradi (kerak bo'lsa bazadan yangilab)
+async function session(userId, fn) {
+  const c = ctxFor(userId);
+  c.inflight++;
+  try {
+    if (storeFactory) {
+      // Bo'sh turgan izolyatda bazadan yangilanadi; parallel so'rovlar bitta yuklashni kutadi
+      if (c.inflight === 1) c.loading = loadCtx(c);
+      await c.loading;
+    }
+    return await als.run(c, fn);
+  } finally {
+    c.inflight--;
+    await c.chain;
+  }
+}
+
+const fileFor = (c) => (c.rowId === "main" ? DB_FILE : path.join(DATA_DIR, `db-${c.rowId.replace(/[^\w.-]/g, "_")}.json`));
 
 function load() {
-  if (cache) return cache;
-  if (!fs.existsSync(DB_FILE)) {
+  const c = cur();
+  if (c.cache) return c.cache;
+  if (storeFactory) throw new Error("Baza yuklanmagan");
+  const file = fileFor(c);
+  if (!fs.existsSync(file)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-    cache = emptyDb();
-    save();
+    c.cache = emptyDb();
+    saveCtx(c);
   } else {
-    cache = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+    c.cache = normalize(JSON.parse(fs.readFileSync(file, "utf8")));
   }
-  return cache;
+  return c.cache;
 }
 
-function save() {
-  if (remote) {
+function saveCtx(c) {
+  if (storeFactory) {
     // Yozuvlar ketma-ket bajariladi; har biri saqlash chaqirilgan paytdagi holatni yozadi
-    const json = JSON.stringify(cache);
-    remote.chain = remote.chain
-      .then(() => remote.store.save(json))
-      .catch((e) => console.error("Bazaga yozib bo'lmadi:", e.message));
+    const json = JSON.stringify(c.cache);
+    const store = storeFactory(c.rowId);
+    c.chain = c.chain.then(() => store.save(json)).catch((e) => console.error("Bazaga yozib bo'lmadi:", e.message));
     return;
   }
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = DB_FILE + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(cache, null, 2));
-  fs.renameSync(tmp, DB_FILE);
+  const file = fileFor(c);
+  const tmp = file + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(c.cache, null, 2));
+  fs.renameSync(tmp, file);
 }
+const save = () => saveCtx(cur());
 
 // Navbatdagi barcha yozuvlar tugashini kutish
-const flush = () => (remote ? remote.chain : Promise.resolve());
+const flush = () => cur().chain;
 
 function reset(data) {
-  cache = data || emptyDb();
-  save();
+  const c = cur();
+  c.cache = data ? normalize(data) : emptyDb();
+  saveCtx(c);
 }
 
-module.exports = { init, load, save, flush, reset, uid, emptyDb, storage: () => (remote ? remote.store.name : "file") };
+module.exports = {
+  init, configure, session, exists, load, save, flush, reset, uid, emptyDb,
+  storage: () => (storeFactory ? storeFactory("main").name : "file"),
+};

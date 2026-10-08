@@ -12,7 +12,9 @@ const S = {
   data: null,
   scope: localGet("scope", "all"),
   period: localGet("period", "6m"),
-  txFilter: { q: "", type: "", scope: "", category: "", project: "" },
+  txFilter: { q: "", type: "", scope: "", category: "", project: "", from: "", to: "" },
+  from: localGet("from", ""),
+  to: localGet("to", ""),
   teamMonth: thisMonth(),
   chat: JSON.parse(localGet("chat", "[]")),
   voiceLang: localGet("voiceLang", "uz-UZ"),
@@ -49,16 +51,34 @@ const monthLabel = (k) => {
   const [y, m] = k.split("-");
   return `${months[+m - 1]} ${y.slice(2)}`;
 };
-const scopeName = { personal: "Shaxsiy", agency: "Agentlik", all: "Hammasi" };
+// Bo'limlar (biznes / shaxsiy) ma'lumotdan olinadi — foydalanuvchi o'zi qo'shadi va olib tashlaydi
+const scopes = () => S.data?.scopes || [];
+const scopeLabel = (id) => (id === "all" ? "Hammasi" : scopes().find((x) => x.id === id)?.name || id || "—");
+const scopeKind = (id) => scopes().find((x) => x.id === id)?.kind || "business";
+const firstBiz = () => (scopes().find((x) => x.kind !== "personal") || scopes()[0] || { id: "" }).id;
+const scopeOptions = (sel) => scopes().map((x) => `<option value="${esc(x.id)}" ${x.id === sel ? "selected" : ""}>${esc(x.name)}</option>`).join("");
 const statusName = { active: "Jarayonda", done: "Yakunlangan", paused: "To'xtatilgan", lead: "Muzokarada" };
 
 // ---------- API ----------
 async function api(path, opts = {}) {
-  const res = await fetch((window.GF_API_BASE || "") + "/api" + path, {
-    method: opts.method || "GET",
-    headers: { "Content-Type": "application/json", "x-app-key": localGet("key", "") },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
+  const ctl = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, 40000);
+  opts.signal?.addEventListener("abort", () => ctl.abort());
+  let res;
+  try {
+    res = await fetch((window.GF_API_BASE || "") + "/api" + path, {
+      method: opts.method || "GET",
+      headers: { "Content-Type": "application/json", "x-app-key": localGet("key", "") },
+      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: ctl.signal,
+    });
+  } catch (e) {
+    if (timedOut) throw new Error("Server javob bermadi. Internetni tekshirib, qayta urinib ko'ring");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   if (res.status === 401) {
     renderLogin();
     throw new Error("Parol kerak");
@@ -68,8 +88,9 @@ async function api(path, opts = {}) {
   return json;
 }
 
-async function refresh() {
-  S.data = await api("/state?month=" + S.teamMonth);
+async function refresh(signal) {
+  S.data = await api("/state?month=" + S.teamMonth, { signal });
+  if (S.scope !== "all" && !scopes().some((x) => x.id === S.scope)) { S.scope = "all"; localSet("scope", "all"); }
   const badge = $("#aiBadge");
   badge.textContent = S.data.aiEnabled ? `✦ ${S.data.aiProvider} ulangan` : "AI offline";
   badge.className = "pill " + (S.data.aiEnabled ? "ok" : "warn");
@@ -98,10 +119,15 @@ function periodRange(p) {
     case "3m": return { from: back(2), to: today() };
     case "6m": return { from: back(5), to: today() };
     case "year": return { from: `${now.getFullYear()}-01-01`, to: today() };
+    case "custom": return { ...(S.from && { from: S.from }), ...(S.to && { to: S.to }) };
     default: return {};
   }
 }
-const PERIODS = [["month", "Bu oy"], ["3m", "3 oy"], ["6m", "6 oy"], ["year", "Yil"], ["all", "Hammasi"]];
+const PERIODS = [["month", "Bu oy"], ["3m", "3 oy"], ["6m", "6 oy"], ["year", "Yil"], ["custom", "Maxsus"], ["all", "Hammasi"]];
+function periodLabel() {
+  if (S.period === "custom") return `${S.from ? fmtDate(S.from) : "boshidan"} — ${S.to ? fmtDate(S.to) : "bugungacha"}`;
+  return PERIODS.find((p) => p[0] === S.period)[1];
+}
 
 function seg(name, options, current) {
   return `<div class="seg" data-seg="${name}">${options
@@ -110,7 +136,11 @@ function seg(name, options, current) {
 }
 function bindSeg(root, name, fn) {
   $$(`[data-seg="${name}"] button`, root).forEach((b) =>
-    b.addEventListener("click", () => fn(b.dataset.v))
+    b.addEventListener("click", () => {
+      // Bosilganda darhol javob ko'rinsin (server javobini kutmasdan)
+      $$(`[data-seg="${name}"] button`, root).forEach((x) => x.classList.toggle("on", x === b));
+      fn(b.dataset.v);
+    })
   );
 }
 
@@ -146,28 +176,47 @@ const moneyTip = (ctx) => ` ${ctx.dataset.label || ctx.label}: ${money(ctx.parse
 // ================= ROUTER =================
 const pages = { dashboard, transactions, projects, team, ai: aiPage, settings };
 
+let routeSeq = 0, routeCtl = null, busyTimer = null;
+function setBusy(on) {
+  clearTimeout(busyTimer);
+  if (on) busyTimer = setTimeout(() => document.body.classList.add("busy"), 100);
+  else document.body.classList.remove("busy");
+}
+
+// Har yangi o'tishda eskisi bekor qilinadi — sekin kelgan eski sahifa yangisining ustiga yozmaydi
 async function route() {
   const name = (location.hash.slice(1) || "dashboard").split("/")[0];
   const fn = pages[name] || dashboard;
+  const seq = ++routeSeq;
+  routeCtl?.abort();
+  routeCtl = new AbortController();
+  S.sig = routeCtl.signal;
   $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.page === name));
-  destroyCharts();
+  setBusy(true);
   const page = $("#page");
-  page.style.animation = "none";
-  page.offsetHeight;
-  page.style.animation = "";
   try {
-    if (!S.data) await refresh();
+    if (!S.data) await refresh(S.sig);
+    if (seq !== routeSeq) return;
+    destroyCharts();
+    page.style.animation = "none";
+    page.offsetHeight;
+    page.style.animation = "";
     await fn(page);
   } catch (e) {
-    if (e.message !== "Parol kerak") page.innerHTML = `<div class="card glass empty">${esc(e.message)}</div>`;
+    if (seq !== routeSeq || e.name === "AbortError" || e.message === "Parol kerak") return;
+    page.innerHTML = `<div class="card glass empty">${esc(e.message)}<br><br><button class="btn" onclick="route()">↻ Qayta urinish</button></div>`;
+  } finally {
+    if (seq === routeSeq) setBusy(false);
   }
 }
 
 // ================= DASHBOARD =================
 async function dashboard(page) {
+  const sig = S.sig;
   const range = periodRange(S.period);
   const q = new URLSearchParams({ scope: S.scope, ...range });
-  const d = await api("/dashboard?" + q);
+  const d = await api("/dashboard?" + q, { signal: sig });
+  if (sig.aborted) return;
 
   const expCats = d.categories.filter((c) => c.type === "expense");
   const incCats = d.categories.filter((c) => c.type === "income");
@@ -178,10 +227,11 @@ async function dashboard(page) {
 
   page.innerHTML = `
     <div class="page-head">
-      <div><h1>Moliyaviy holat</h1><p>${scopeName[S.scope]} · ${PERIODS.find((p) => p[0] === S.period)[1]}</p></div>
+      <div><h1>Moliyaviy holat</h1><p>${esc(scopeLabel(S.scope))} · ${esc(periodLabel())}</p></div>
       <div class="toolbar">
-        ${seg("scope", [["all", "Hammasi"], ["agency", "Agentlik"], ["personal", "Shaxsiy"]], S.scope)}
+        ${scopes().length > 1 ? seg("scope", [["all", "Hammasi"], ...scopes().map((x) => [x.id, esc(x.name)])], S.scope) : ""}
         ${seg("period", PERIODS, S.period)}
+        ${S.period === "custom" ? `<div class="daterange"><input type="date" id="pFrom" value="${S.from}" aria-label="Boshlanish sanasi" /><span>—</span><input type="date" id="pTo" value="${S.to}" aria-label="Tugash sanasi" /></div>` : ""}
       </div>
     </div>
 
@@ -189,7 +239,7 @@ async function dashboard(page) {
       ${kpi("Kirim", money(d.income), `${d.count} ta operatsiya`, "var(--income)")}
       ${kpi("Chiqim", money(d.expense), expCats[0] ? `Eng katta: ${esc(expCats[0].name)}` : "—", "var(--expense)")}
       ${kpi("Sof foyda", `<span class="${d.net >= 0 ? "up" : "down"}">${money(d.net)}</span>`, `Rentabellik ${pct(d.savingsRate)}`, "var(--accent)")}
-      ${S.scope === "personal"
+      ${scopeKind(S.scope) === "personal" && S.scope !== "all"
         ? kpi("Tejash darajasi", pct(d.savingsRate), "Kirimdan qolgan ulush", "var(--accent-2)")
         : kpi("Bu oy oyliklar", money(d.payroll.accrued), `To'langan ${compact(d.payroll.paid)} · qarz ${compact(d.payroll.debt)}`, "var(--accent-2)")}
     </div>
@@ -213,8 +263,8 @@ async function dashboard(page) {
         <div class="chart-box sm"><canvas id="cNet"></canvas></div>
       </div>
       <div class="card glass">
-        <div class="card-head"><div><h3>Agentlik va shaxsiy</h3><p class="sub">Tanlangan davr uchun</p></div></div>
-        ${scopeSplit(d.byScope)}
+        <div class="card-head"><div><h3>Bo'limlar bo'yicha</h3><p class="sub">Tanlangan davr uchun</p></div></div>
+        ${scopeSplit(d.scopes)}
       </div>
     </div>
 
@@ -246,7 +296,19 @@ async function dashboard(page) {
   `;
 
   bindSeg(page, "scope", (v) => { S.scope = v; localSet("scope", v); route(); });
-  bindSeg(page, "period", (v) => { S.period = v; localSet("period", v); route(); });
+  bindSeg(page, "period", (v) => {
+    S.period = v; localSet("period", v);
+    if (v === "custom" && !S.from) { S.from = today().slice(0, 8) + "01"; S.to = today(); localSet("from", S.from); localSet("to", S.to); }
+    route();
+  });
+  const onRange = () => {
+    const f = $("#pFrom", page).value, t = $("#pTo", page).value;
+    if (f && t && f > t) return toast("Boshlanish sanasi tugashdan keyin bo'lmasin", true);
+    S.from = f; S.to = t; localSet("from", f); localSet("to", t);
+    route();
+  };
+  $("#pFrom", page)?.addEventListener("change", onRange);
+  $("#pTo", page)?.addEventListener("change", onRange);
   $$("[data-act=add]", page).forEach((b) => b.addEventListener("click", () => txModal()));
   $$("[data-act=demo]", page).forEach((b) => b.addEventListener("click", loadDemo));
   bindTxRows(page);
@@ -352,9 +414,10 @@ async function dashboard(page) {
 }
 
 // ---------- Dashboard: AI tahlil kartasi ----------
+const adviceKey = () => "advice." + S.scope + "." + S.period + (S.period === "custom" ? `.${S.from}.${S.to}` : "");
 function aiAdviceCard() {
   const name = S.data.aiProvider || "AI";
-  const saved = localGet("advice." + S.scope + "." + S.period, "");
+  const saved = localGet(adviceKey(), "");
   return `<div class="card glass" style="margin-top:18px" id="aiCard">
     <div class="card-head">
       <div><h3>✦ ${esc(name)} tahlili va maslahatlari</h3>
@@ -375,16 +438,16 @@ function bindAiAdvice(page, range) {
     out.style.display = "";
     out.innerHTML = `<div class="typing"><span></span><span></span><span></span></div>`;
     btn.disabled = true;
-    const period = PERIODS.find((p) => p[0] === S.period)[1];
+    const period = periodLabel();
     const prompt =
-      `Dashboard tahlili. Bo'lim: ${scopeName[S.scope]}, davr: ${period}` +
+      `Dashboard tahlili. Bo'lim: ${scopeLabel(S.scope)}, davr: ${period}` +
       (range.from ? ` (${range.from} — ${range.to})` : "") +
       `. Qisqa va aniq yoz (raqamlar bilan): 1) umumiy holat va trend, 2) eng katta xarajatlar va g'ayrioddiy o'zgarishlar, ` +
       `3) loyihalar marjasi — qaysi biri foydali, qaysi biri xavfli, 4) xodimlar va oyliklar bo'yicha qarzlar, 5) 3-5 ta amaliy maslahat.`;
     try {
       const r = await api("/ai/chat", { method: "POST", body: { messages: [{ role: "user", content: prompt }] } });
       out.innerHTML = md(r.reply);
-      localSet("advice." + S.scope + "." + S.period, r.reply);
+      localSet(adviceKey(), r.reply);
       btn.textContent = "↻ Yangilash";
     } catch (e) {
       out.innerHTML = `<p class="down">⚠️ ${esc(e.message)}</p>`;
@@ -398,25 +461,25 @@ function kpi(label, value, hint, color) {
     <div class="value num">${value}</div><div class="hint">${hint}</div></div>`;
 }
 
-function scopeSplit(b) {
-  const row = (name, s) => {
-    const max = Math.max(s.income, s.expense, 1);
+function scopeSplit(list) {
+  const row = (x) => {
+    const max = Math.max(x.income, x.expense, 1);
     return `<div style="margin-bottom:18px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:8px"><b>${name}</b>
-        <span class="num ${s.net >= 0 ? "up" : "down"}">${s.net >= 0 ? "+" : ""}${money(s.net)}</span></div>
+      <div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:8px"><b>${esc(x.name)}</b>
+        <span class="num ${x.net >= 0 ? "up" : "down"}">${x.net >= 0 ? "+" : ""}${money(x.net)}</span></div>
       <div style="display:grid;grid-template-columns:70px 1fr 110px;gap:8px;align-items:center;font-size:13px">
-        <span class="sub" style="margin:0">Kirim</span><div class="bar"><span style="width:${(s.income / max) * 100}%;background:var(--income)"></span></div><span class="num" style="text-align:right">${compact(s.income)}</span>
-        <span class="sub" style="margin:0">Chiqim</span><div class="bar"><span style="width:${(s.expense / max) * 100}%;background:var(--expense)"></span></div><span class="num" style="text-align:right">${compact(s.expense)}</span>
+        <span class="sub" style="margin:0">Kirim</span><div class="bar"><span style="width:${(x.income / max) * 100}%;background:var(--income)"></span></div><span class="num" style="text-align:right">${compact(x.income)}</span>
+        <span class="sub" style="margin:0">Chiqim</span><div class="bar"><span style="width:${(x.expense / max) * 100}%;background:var(--expense)"></span></div><span class="num" style="text-align:right">${compact(x.expense)}</span>
       </div></div>`;
   };
-  return row("Agentlik", b.agency) + row("Shaxsiy", b.personal);
+  return list.map(row).join("");
 }
 
 function txRow(t) {
   const c = cat(t.categoryId);
   const color = c?.color || "#8a90a6";
   const tags = [
-    `<span class="tag">${scopeName[t.scope]}</span>`,
+    `<span class="tag">${esc(scopeLabel(t.scope))}</span>`,
     t.projectId && proj(t.projectId) ? `<span class="tag">◈ ${esc(proj(t.projectId).name)}</span>` : "",
     t.employeeId && emp(t.employeeId) ? `<span class="tag">☺ ${esc(emp(t.employeeId).name)}</span>` : "",
     t.source === "ai" || t.source === "voice" || t.source === "ai-chat" ? `<span class="tag">✦ AI</span>` : "",
@@ -440,6 +503,8 @@ async function transactions(page) {
     .filter((t) =>
       (!f.type || t.type === f.type) &&
       (!f.scope || t.scope === f.scope) &&
+      (!f.from || t.date >= f.from) &&
+      (!f.to || t.date <= f.to) &&
       (!f.category || t.categoryId === f.category) &&
       (!f.project || t.projectId === f.project) &&
       (!f.q || (t.note + " " + (cat(t.categoryId)?.name || "")).toLowerCase().includes(f.q.toLowerCase()))
@@ -450,7 +515,7 @@ async function transactions(page) {
 
   page.innerHTML = `
     <div class="page-head">
-      <div><h1>Kirim-chiqim</h1><p>Shaxsiy va agentlik operatsiyalari</p></div>
+      <div><h1>Kirim-chiqim</h1><p>Barcha bo'limlar bo'yicha operatsiyalar</p></div>
       <div class="toolbar"><button class="btn" id="voiceBtn">🎙 Ovoz / AI bilan</button><button class="btn primary" id="addBtn">+ Qo'shish</button></div>
     </div>
 
@@ -463,7 +528,9 @@ async function transactions(page) {
       <div class="toolbar" style="margin-bottom:14px">
         <input id="fq" placeholder="Qidirish…" value="${esc(f.q)}" />
         <select id="ftype"><option value="">Turi: hammasi</option><option value="income" ${f.type === "income" ? "selected" : ""}>Kirim</option><option value="expense" ${f.type === "expense" ? "selected" : ""}>Chiqim</option></select>
-        <select id="fscope"><option value="">Bo'lim: hammasi</option><option value="agency" ${f.scope === "agency" ? "selected" : ""}>Agentlik</option><option value="personal" ${f.scope === "personal" ? "selected" : ""}>Shaxsiy</option></select>
+        <select id="fscope"><option value="">Bo'lim: hammasi</option>${scopeOptions(f.scope)}</select>
+        <label class="dr"><span>Dan</span><input type="date" id="ffrom" value="${f.from}" /></label>
+        <label class="dr"><span>Gacha</span><input type="date" id="fto" value="${f.to}" /></label>
         <select id="fcat"><option value="">Kategoriya: hammasi</option>${S.data.categories.map((c) => `<option value="${c.id}" ${f.category === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select>
         <select id="fproj"><option value="">Loyiha: hammasi</option>${S.data.projects.map((p) => `<option value="${p.id}" ${f.project === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
         <span class="pill ok num">+${compact(inc)}</span><span class="pill bad num">−${compact(exp)}</span><span class="pill num">${list.length} ta</span>
@@ -479,6 +546,8 @@ async function transactions(page) {
   $("#fq").addEventListener("change", (e) => upd("q", e.target.value));
   $("#ftype").onchange = (e) => upd("type", e.target.value);
   $("#fscope").onchange = (e) => upd("scope", e.target.value);
+  $("#ffrom").onchange = (e) => upd("from", e.target.value);
+  $("#fto").onchange = (e) => upd("to", e.target.value);
   $("#fcat").onchange = (e) => upd("category", e.target.value);
   $("#fproj").onchange = (e) => upd("project", e.target.value);
 }
@@ -491,13 +560,13 @@ const projOptions = (sel) => `<option value="">— yo'q —</option>` + S.data.p
 const empOptions = (sel) => `<option value="">— yo'q —</option>` + S.data.employees.map((e) => `<option value="${e.id}" ${e.id === sel ? "selected" : ""}>${esc(e.name)}</option>`).join("");
 
 function txModal(t, preset = {}) {
-  const x = t || { type: "expense", scope: S.scope === "personal" ? "personal" : "agency", date: today(), ...preset };
+  const x = t || { type: "expense", scope: S.scope !== "all" ? S.scope : firstBiz(), date: today(), ...preset };
   const m = openModal(`
     <h2>${t ? "Operatsiyani tahrirlash" : "Yangi operatsiya"}</h2>
     <p class="sub">Kirim yoki chiqimni qo'lda kiriting</p>
     <div class="form-grid">
       <label class="f">Turi ${seg("ttype", [["expense", "Chiqim"], ["income", "Kirim"]], x.type)}</label>
-      <label class="f">Bo'lim ${seg("tscope", [["agency", "Agentlik"], ["personal", "Shaxsiy"]], x.scope)}</label>
+      <label class="f">Bo'lim ${seg("tscope", scopes().map((y) => [y.id, esc(y.name)]), x.scope)}</label>
       <label class="f">Summa (so'm)<input id="tamount" type="number" min="0" step="1000" value="${x.amount || ""}" placeholder="0" /></label>
       <label class="f">Sana<input id="tdate" type="date" value="${x.date}" /></label>
       <label class="f full">Kategoriya<select id="tcat">${catOptions(x.type, x.scope, x.categoryId)}</select></label>
@@ -586,7 +655,7 @@ function renderDrafts(box, drafts, engine, source, onSaved) {
         <div class="draft" data-i="${i}">
           <select data-k="type"><option value="expense" ${d.type === "expense" ? "selected" : ""}>Chiqim</option><option value="income" ${d.type === "income" ? "selected" : ""}>Kirim</option></select>
           <input data-k="amount" type="number" value="${d.amount}" />
-          <select data-k="scope"><option value="agency" ${d.scope === "agency" ? "selected" : ""}>Agentlik</option><option value="personal" ${d.scope === "personal" ? "selected" : ""}>Shaxsiy</option></select>
+          <select data-k="scope">${scopeOptions(d.scope)}</select>
           <select data-k="categoryId">${catOptions(d.type, d.scope, d.categoryId)}</select>
           <input data-k="date" type="date" value="${d.date}" />
           <input data-k="note" class="wide" value="${esc(d.note)}" placeholder="Izoh" />
@@ -762,8 +831,8 @@ function projectDetail(page, p) {
     </div>`;
 
   $("#pEdit").onclick = () => projectModal(p);
-  $("#pInc").onclick = () => txModal(null, { type: "income", scope: "agency", projectId: p.id });
-  $("#pExp").onclick = () => txModal(null, { type: "expense", scope: "agency", projectId: p.id });
+  $("#pInc").onclick = () => txModal(null, { type: "income", scope: firstBiz(), projectId: p.id });
+  $("#pExp").onclick = () => txModal(null, { type: "expense", scope: firstBiz(), projectId: p.id });
   bindTxRows(page);
 
   const saveItems = async (items) => {
@@ -1107,9 +1176,27 @@ function md(src) {
 
 // ================= SOZLAMALAR =================
 async function settings(page) {
-  const groups = [["agency", "expense", "Agentlik — chiqim"], ["agency", "income", "Agentlik — kirim"], ["personal", "expense", "Shaxsiy — chiqim"], ["personal", "income", "Shaxsiy — kirim"]];
+  const groups = scopes().flatMap((x) => [[x.id, "expense", `${x.name} — chiqim`], [x.id, "income", `${x.name} — kirim`]]);
+  const owner = S.data.me?.owner !== false;
+  const users = owner && localGet("key", "") ? await api("/users").catch(() => []) : [];
   page.innerHTML = `
-    <div class="page-head"><div><h1>Sozlamalar</h1><p>Kategoriyalar, ma'lumotlarni eksport/import</p></div></div>
+    <div class="page-head"><div><h1>Sozlamalar</h1><p>Bo'limlar, kategoriyalar, foydalanuvchilar va ma'lumotlar</p></div></div>
+    <div class="card glass" style="margin-bottom:18px">
+      <div class="card-head"><div><h3>Bo'limlar</h3><p class="sub">Har bir biznes yoki shaxsiy hisobingiz uchun alohida bo'lim. Yangi biznes ochsangiz — qo'shing, kerak bo'lmasa — olib tashlang.</p></div></div>
+      <div class="scope-list">
+        ${scopes().map((x) => `
+          <div class="scope-row">
+            <input value="${esc(x.name)}" data-sname="${esc(x.id)}" aria-label="Bo'lim nomi" />
+            <select data-skind="${esc(x.id)}" aria-label="Turi"><option value="business" ${x.kind !== "personal" ? "selected" : ""}>Biznes (loyiha, xodim)</option><option value="personal" ${x.kind === "personal" ? "selected" : ""}>Shaxsiy</option></select>
+            <button class="btn sm danger" data-sdel="${esc(x.id)}" ${scopes().length < 2 ? "disabled" : ""}>O'chirish</button>
+          </div>`).join("")}
+        <div class="scope-row add">
+          <input id="newScope" placeholder="Yangi bo'lim nomi (masalan: Restoran)" />
+          <select id="newKind"><option value="business">Biznes (loyiha, xodim)</option><option value="personal">Shaxsiy</option></select>
+          <button class="btn primary sm" id="addScope">+ Qo'shish</button>
+        </div>
+      </div>
+    </div>
     <div class="grid cols-2e">
       ${groups.map(([scope, type, title]) => `
         <div class="card glass"><div class="card-head"><h3>${title}</h3><button class="btn sm" data-addcat="${scope}|${type}">+ Kategoriya</button></div>
@@ -1120,6 +1207,22 @@ async function settings(page) {
               <button class="btn sm danger" data-cdel="${c.id}">✕</button>
             </div>`).join("")}
         </div>`).join("")}
+    </div>
+    <div class="card glass" style="margin-top:18px">
+      <div class="card-head"><div><h3>Hisob</h3><p class="sub">${owner ? "Siz ilova egasisiz — barcha sozlamalar sizda." : `Siz <b>${esc(S.data.me?.name)}</b> hisobi bilan kirgansiz. Ma'lumotlaringiz boshqalardan alohida.`}</p></div>
+        ${localGet("key", "") ? `<button class="btn" id="logout">Chiqish</button>` : ""}</div>
+      ${owner && localGet("key", "") ? `
+      <h3 style="margin-top:16px">Foydalanuvchilar</h3>
+      <p class="sub">Do'stingizga ilovani bering: unga login va parol yarating. Uning ma'lumotlari sizniki bilan aralashmaydi (alohida hisob).</p>
+      <div class="user-list">
+        ${users.map((u) => `<div class="scope-row"><b class="uname">${esc(u.name)}</b><span class="sub" style="margin:0">${u.createdAt ? fmtDate(u.createdAt.slice(0, 10)) : ""}</span>
+          <button class="btn sm" data-upw="${esc(u.name)}">Parolni almashtirish</button><button class="btn sm danger" data-udel="${esc(u.name)}">O'chirish</button></div>`).join("") || `<p class="sub">Hali foydalanuvchi qo'shilmagan</p>`}
+        <div class="scope-row add">
+          <input id="newUser" placeholder="Login (lotin harf, raqam)" autocapitalize="none" autocomplete="off" />
+          <input id="newPass" type="text" placeholder="Parol (kamida 6 belgi)" autocomplete="off" />
+          <button class="btn primary sm" id="addUser">+ Qo'shish</button>
+        </div>
+      </div>` : ""}
     </div>
     <div class="card glass" style="margin-top:18px">
       <h3>Ko'rinish</h3><p class="sub">Saytning rang mavzusi</p>
@@ -1140,6 +1243,39 @@ async function settings(page) {
       <p class="sub">${S.data.aiEnabled ? `✓ ${S.data.aiProvider} ulangan. Ovozli/matnli kiritish va chat to'liq AI rejimida ishlaydi.` : "AI hozir offline rejimda (oddiy kalit so'zlar bo'yicha tahlil). To'liq imkoniyat uchun serverdagi <code>.env</code> fayliga (yoki Render'da Environment bo'limiga) bepul <code>GEMINI_API_KEY</code> qo'shing (aistudio.google.com/apikey) va qayta ishga tushiring."}</p>
     </div>`;
 
+  const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
+  $("#addScope", page).onclick = guard(async () => {
+    const name = $("#newScope", page).value.trim();
+    if (!name) return $("#newScope", page).focus();
+    await api("/scopes", { method: "POST", body: { name, kind: $("#newKind", page).value } });
+    await refresh(); toast("Bo'lim qo'shildi ✓"); route();
+  });
+  $$("[data-sname]", page).forEach((i) => i.addEventListener("change", guard(async () => {
+    await api("/scopes/" + i.dataset.sname, { method: "PUT", body: { name: i.value } });
+    await refresh(); toast("Saqlandi ✓");
+  })));
+  $$("[data-skind]", page).forEach((i) => i.addEventListener("change", guard(async () => {
+    await api("/scopes/" + i.dataset.skind, { method: "PUT", body: { kind: i.value } });
+    await refresh(); toast("Saqlandi ✓"); route();
+  })));
+  $$("[data-sdel]", page).forEach((b) => (b.onclick = () => deleteScopeModal(scopes().find((x) => x.id === b.dataset.sdel))));
+  $("#logout", page)?.addEventListener("click", logout);
+  $("#addUser", page)?.addEventListener("click", guard(async () => {
+    const username = $("#newUser", page).value.trim(), password = $("#newPass", page).value;
+    await api("/users", { method: "POST", body: { username, password } });
+    toast("Foydalanuvchi qo'shildi ✓"); route();
+  }));
+  $$("[data-upw]", page).forEach((b) => (b.onclick = guard(async () => {
+    const password = prompt(`"${b.dataset.upw}" uchun yangi parol (kamida 6 belgi):`);
+    if (!password) return;
+    await api("/users", { method: "POST", body: { username: b.dataset.upw, password } });
+    toast("Parol almashtirildi ✓");
+  })));
+  $$("[data-udel]", page).forEach((b) => (b.onclick = guard(async () => {
+    if (!confirm(`"${b.dataset.udel}" kirishi o'chirilsinmi? (Uning ma'lumotlari saqlanib qoladi)`)) return;
+    await api("/users/" + encodeURIComponent(b.dataset.udel), { method: "DELETE" });
+    toast("O'chirildi"); route();
+  })));
   $$("[data-addcat]", page).forEach((b) => (b.onclick = async () => {
     const [scope, type] = b.dataset.addcat.split("|");
     const name = prompt("Kategoriya nomi:");
@@ -1157,7 +1293,7 @@ async function settings(page) {
   $("#exp").onclick = () => download(`glass-finance-${today()}.json`, JSON.stringify(stripStats(S.data), null, 2), "application/json");
   $("#exCsv").onclick = () => {
     const rows = [["Sana", "Turi", "Bo'lim", "Kategoriya", "Summa", "Loyiha", "Xodim", "Izoh"]].concat(
-      S.data.transactions.slice().sort((a, b) => a.date.localeCompare(b.date)).map((t) => [t.date, t.type === "income" ? "Kirim" : "Chiqim", scopeName[t.scope], cat(t.categoryId)?.name || "", t.amount, proj(t.projectId)?.name || "", emp(t.employeeId)?.name || "", t.note || ""])
+      S.data.transactions.slice().sort((a, b) => a.date.localeCompare(b.date)).map((t) => [t.date, t.type === "income" ? "Kirim" : "Chiqim", scopeLabel(t.scope), cat(t.categoryId)?.name || "", t.amount, proj(t.projectId)?.name || "", emp(t.employeeId)?.name || "", t.note || ""])
     );
     download(`kirim-chiqim-${today()}.csv`, "﻿" + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\n"), "text/csv");
   };
@@ -1175,7 +1311,7 @@ async function settings(page) {
 
 function stripStats(d) {
   return {
-    settings: d.settings, categories: d.categories, transactions: d.transactions, workLogs: d.workLogs,
+    settings: d.settings, scopes: d.scopes, categories: d.categories, transactions: d.transactions, workLogs: d.workLogs,
     projects: d.projects.map(({ stats, ...p }) => p), employees: d.employees.map(({ stats, ...e }) => e),
   };
 }
@@ -1188,6 +1324,33 @@ function download(name, content, type) {
 async function loadDemo() {
   if (S.data.transactions.length && !confirm("Joriy ma'lumotlar demo bilan almashtiriladi. Davom etasizmi?")) return;
   await api("/demo", { method: "POST" }); await refresh(); toast("Demo ma'lumot yuklandi ✓"); route();
+}
+
+function deleteScopeModal(sc) {
+  const count = S.data.transactions.filter((t) => t.scope === sc.id).length;
+  const others = scopes().filter((x) => x.id !== sc.id);
+  const m = openModal(`
+    <h2>"${esc(sc.name)}" bo'limini o'chirish</h2>
+    <p class="sub">${count ? `Bu bo'limda <b>${count} ta operatsiya</b> bor. Ularni nima qilamiz?` : "Bu bo'limda operatsiya yo'q."}</p>
+    ${count ? `<div class="form-grid">
+      <label class="f full">Operatsiyalarni ko'chirish<select id="moveTo">${others.map((x) => `<option value="${esc(x.id)}">${esc(x.name)} bo'limiga ko'chirish</option>`).join("")}<option value="">Ularni ham o'chirish</option></select></label>
+    </div>` : ""}
+    <div class="modal-foot"><button class="btn" data-close>Bekor</button><button class="btn danger" id="sdelGo">O'chirish</button></div>`);
+  $("#sdelGo", m).onclick = async () => {
+    try {
+      const moveTo = count ? $("#moveTo", m).value : "";
+      if (count && !moveTo && !confirm(`${count} ta operatsiya butunlay o'chiriladi. Davom etasizmi?`)) return;
+      await api("/scopes/" + sc.id, { method: "DELETE", body: { moveTo } });
+      if (S.scope === sc.id) { S.scope = "all"; localSet("scope", "all"); }
+      closeModal(); await refresh(); toast("Bo'lim o'chirildi"); route();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+function logout() {
+  localSet("key", "");
+  S.data = null;
+  renderLogin();
 }
 
 // ================= MODAL =================
@@ -1207,15 +1370,30 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal
 // ================= LOGIN =================
 function renderLogin() {
   $("#page").innerHTML = `<div class="login glass"><div class="logo" style="margin:0 auto 16px;width:56px;height:56px;border-radius:18px"></div>
-    <h2 style="margin:0 0 6px">Glass Finance</h2><p class="sub">Kirish uchun parolni kiriting</p>
-    <input type="password" id="pw" placeholder="Parol" style="margin:14px 0" /><button class="btn primary" id="pwGo" style="width:100%;justify-content:center">Kirish</button></div>`;
+    <h2 style="margin:0 0 6px">Glass Finance</h2><p class="sub">Hisobingizga kiring</p>
+    <input id="lu" placeholder="Login (ilova egasi bo'lsangiz bo'sh qoldiring)" autocapitalize="none" autocomplete="username" style="margin:14px 0 0" />
+    <input type="password" id="pw" placeholder="Parol" autocomplete="current-password" style="margin:10px 0 14px" />
+    <button class="btn primary" id="pwGo" style="width:100%;justify-content:center">Kirish</button></div>`;
+  let busy = false;
   const go = async () => {
-    const pw = $("#pw").value;
-    const r = await fetch((window.GF_API_BASE || "") + "/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw }) }).then((r) => r.json());
-    if (r.ok) { localSet("key", pw); S.data = null; route(); } else toast("Parol noto'g'ri", true);
+    if (busy) return;
+    busy = true;
+    const btn = $("#pwGo");
+    btn.disabled = true; btn.textContent = "Tekshirilmoqda…";
+    try {
+      const pw = $("#pw").value;
+      const res = await fetch((window.GF_API_BASE || "") + "/api/auth", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: $("#lu").value, password: pw }),
+      });
+      const r = await res.json().catch(() => ({}));
+      if (r.ok) { localSet("key", r.token || pw); S.data = null; route(); return; }
+      toast(res.status === 429 ? r.error : "Login yoki parol noto'g'ri", true);
+    } catch { toast("Serverga ulanib bo'lmadi", true); }
+    busy = false; btn.disabled = false; btn.textContent = "Kirish";
   };
   $("#pwGo").onclick = go;
-  $("#pw").addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  ["#pw", "#lu"].forEach((id) => $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") go(); }));
 }
 
 // ================= INIT =================
@@ -1231,6 +1409,13 @@ function applyTheme(t, remember) {
   $("#fab").onclick = () => quickModal(true);
   $("#sideVoice").onclick = () => quickModal(true);
   $("#fab").classList.add("liquid");
+  // Menyu bosilganda aktiv holat darhol almashadi
+  $("#nav").addEventListener("click", (e) => {
+    const a = e.target.closest("a[data-page]");
+    if (a) $$("#nav a").forEach((x) => x.classList.toggle("active", x === a));
+  });
   window.addEventListener("hashchange", route);
+  // Serverni oldindan "uyg'otib" qo'yamiz (birinchi bosish sekin bo'lmasin)
+  fetch((window.GF_API_BASE || "") + "/health").catch(() => {});
   route();
 })();

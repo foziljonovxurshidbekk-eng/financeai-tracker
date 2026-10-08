@@ -93,11 +93,11 @@ function textOf(response) {
 // 1) Erkin matn (yoki ovozdan olingan matn) -> tranzaksiyalar qoralamasi
 // ---------------------------------------------------------------------------
 const PARSE_SYSTEM =
-  "Sen marketing agentligi egasining moliyaviy yordamchisisan. Foydalanuvchi o'zbek, rus yoki aralash tilda " +
+  "Sen tadbirkor (masalan marketing agentligi egasi)ning moliyaviy yordamchisisan. Foydalanuvchi o'zbek, rus yoki aralash tilda " +
   "(ko'pincha ovozdan yozilgan, xatoli matn) kirim-chiqimlarini aytadi. Matndan barcha alohida tranzaksiyalarni ajrat.\n" +
   "Qoidalar:\n" +
   "- Summalarni so'mga aylantir: 'ming'/'k'/'тыс' = 1000, 'mln'/'million'/'миллион' = 1 000 000. Dollar aytilsa, note'da yoz va summani 12 800 kurs bilan so'mga aylantir.\n" +
-  "- scope: agentlik ishi (mijoz, reklama, xodim, loyiha, ofis) = agency; shaxsiy xarajat (ovqat, uy, oila, taksi) = personal. Aniq bo'lmasa defaultScope'dan foydalan.\n" +
+  "- scope: kontekstdagi scopes ro'yxatidan bo'lim id'sini tanla. Biznes bo'limlar (kind=business) — mijoz, reklama, xodim, loyiha, ofis, savdo kabi ish xarajatlari; shaxsiy bo'lim (kind=personal) — ovqat, uy, oila, taksi. Bir nechta biznes bo'lsa, matndagi nomga qarab tanla. Aniq bo'lmasa defaultScope'dan foydalan.\n" +
   "- category: faqat ro'yxatdagi nomlardan, type va scope'ga mos kelganini tanla.\n" +
   "- Sana: 'bugun' = today, 'kecha' = today-1 va h.k. Aytilmasa today.\n" +
   "- Xodimga to'lov bo'lsa employee maydoniga ro'yxatdagi ismni yoz, kategoriya ish haqi bo'lsin.\n" +
@@ -108,7 +108,8 @@ async function parseTransactions(db, text, defaultScope) {
   const ai = provider();
   if (!ai) return { drafts: fallbackParse(db, text, defaultScope), engine: "offline" };
 
-  const categoryNames = db.categories.map((c) => c.name);
+  const categoryNames = [...new Set(db.categories.map((c) => c.name))];
+  const scopeIds = db.scopes.map((x) => x.id);
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -123,7 +124,7 @@ async function parseTransactions(db, text, defaultScope) {
           properties: {
             type: { type: "string", enum: ["income", "expense"] },
             amount: { type: "number", description: "So'mda, to'liq son (50 ming = 50000)" },
-            scope: { type: "string", enum: ["personal", "agency"] },
+            scope: { type: "string", enum: scopeIds },
             category: { type: "string", enum: categoryNames },
             date: { type: "string", description: "YYYY-MM-DD" },
             note: { type: "string" },
@@ -138,6 +139,7 @@ async function parseTransactions(db, text, defaultScope) {
   const context = {
     today: today(),
     defaultScope: defaultScope || "aniqlanmagan",
+    scopes: db.scopes.map((x) => ({ id: x.id, name: x.name, kind: x.kind })),
     categories: db.categories.map((c) => `${c.name} [${c.type}, ${c.scope}]`),
     projects: db.projects.map((p) => p.name),
     employees: db.employees.map((e) => `${e.name} (${e.role || ""}, ${PAY_NAMES[e.payType] || "oylik"})`),
@@ -177,8 +179,10 @@ async function parseTransactions(db, text, defaultScope) {
 // Nomlarni ID'larga bog'lash
 function resolveDraft(db, t) {
   const norm = (s) => String(s || "").toLowerCase().trim();
+  if (!db.scopes.some((x) => x.id === t.scope)) t = { ...t, scope: db.scopes[0].id };
   const cat =
-    db.categories.find((c) => c.name === t.category) ||
+    db.categories.find((c) => c.name === t.category && c.scope === t.scope && c.type === t.type) ||
+    db.categories.find((c) => c.name === t.category && c.type === t.type) ||
     db.categories.find((c) => c.type === t.type && c.scope === t.scope);
   const proj = t.project
     ? db.projects.find((p) => norm(p.name) === norm(t.project)) ||
@@ -247,7 +251,10 @@ function fallbackParse(db, text, defaultScope) {
     let catName = KEYWORDS.find(([re]) => re.test(part))?.[1];
     let cat = db.categories.find((c) => c.name === catName && c.type === type);
     const agencyHint = /mijoz|reklama|loyiha|xodim|ofis|klient|target|kontent|syomka/i.test(part);
-    const scope = cat?.scope || (agencyHint ? "agency" : defaultScope || "personal");
+    const firstBiz = db.scopes.find((x) => x.kind !== "personal") || db.scopes[0];
+    const firstPersonal = db.scopes.find((x) => x.kind === "personal") || db.scopes[0];
+    const named = db.scopes.find((x) => part.toLowerCase().includes(x.name.toLowerCase()));
+    const scope = named?.id || cat?.scope || (agencyHint ? firstBiz.id : defaultScope || firstPersonal.id);
     cat ||= db.categories.find((c) => c.type === type && c.scope === scope);
     const lower = part.toLowerCase();
     const words = (s) => String(s || "").toLowerCase().split(/\s+/).filter((w) => w.length >= 4);
@@ -274,8 +281,8 @@ function fallbackParse(db, text, defaultScope) {
 // 2) Moliyaviy chat — Claude barcha ma'lumotlarni ko'radi va tool'lar orqali ishlaydi
 // ---------------------------------------------------------------------------
 const CHAT_SYSTEM =
-  "Sen 'Glass Finance' ilovasidagi moliyaviy maslahatchi va buxgaltersan. Foydalanuvchi — marketing agentligi egasi. " +
-  "U shaxsiy va agentlik kirim-chiqimlarini, loyihalar tannarxi va marjasini, xodimlar oyliklarini (oylik yoki dona bo'yicha) shu ilovada yuritadi.\n" +
+  "Sen 'Glass Finance' ilovasidagi moliyaviy maslahatchi va buxgaltersan. Foydalanuvchi — tadbirkor (masalan marketing agentligi egasi). " +
+  "U bir nechta bo'limda (biznes va shaxsiy; scopes ro'yxatiga qarang) kirim-chiqimlarini, loyihalar tannarxi va marjasini, xodimlar oyliklarini (oylik yoki dona bo'yicha) shu ilovada yuritadi.\n" +
   "- Foydalanuvchi qaysi tilda yozsa, o'sha tilda javob ber (odatda o'zbekcha).\n" +
   "- Raqamlarni so'mda, minglarni bo'sh joy bilan ajratib yoz (masalan 12 500 000 so'm).\n" +
   "- Tahlil qilganda aniq raqamlar, foizlar, marja va tavsiyalar ber. Qisqa va lo'nda bo'l, kerak bo'lsa ro'yxat/jadval ishlat.\n" +
@@ -292,6 +299,7 @@ function snapshot(db) {
     currency: "UZS",
     overall: dashboard(db, {}),
     thisMonth: dashboard(db, { from: month + "-01", to: month + "-31" }),
+    scopes: db.scopes,
     categories: db.categories.map((c) => ({ name: c.name, type: c.type, scope: c.scope })),
     projects: db.projects.map((p) => {
       const s = projectStats(db, p);
@@ -359,7 +367,7 @@ const CHAT_TOOLS = (db) => [
         from: { type: "string", description: "YYYY-MM-DD yoki bo'sh" },
         to: { type: "string", description: "YYYY-MM-DD yoki bo'sh" },
         type: { type: "string", enum: ["", "income", "expense"] },
-        scope: { type: "string", enum: ["", "personal", "agency"] },
+        scope: { type: "string", enum: ["", ...db.scopes.map((x) => x.id)] },
         category: { type: "string" },
         project: { type: "string" },
         employee: { type: "string" },
@@ -385,8 +393,8 @@ const CHAT_TOOLS = (db) => [
             properties: {
               type: { type: "string", enum: ["income", "expense"] },
               amount: { type: "number" },
-              scope: { type: "string", enum: ["personal", "agency"] },
-              category: { type: "string", enum: db.categories.map((c) => c.name) },
+              scope: { type: "string", enum: db.scopes.map((x) => x.id) },
+              category: { type: "string", enum: [...new Set(db.categories.map((c) => c.name))] },
               date: { type: "string" },
               note: { type: "string" },
               project: { type: "string" },
@@ -550,21 +558,42 @@ async function chatClaude(db, msgs, context, { uid, save }) {
 }
 
 // Ovozli xabarni matnga aylantirish (faqat Gemini — audio qabul qiladi)
-async function transcribe(buffer, mimeType = "audio/ogg") {
+const TRANSCRIBE_SYSTEM =
+  "Sen ovozli xabarni matnga o'giruvchisan. Faqat odam aniq gapirgan so'zlarni so'zma-so'z yoz (o'zbek, rus yoki aralash til). " +
+  "Yo'tal, nafas, shovqin, musiqa, fon ovozlari va tushunarsiz tovushlarni YOZMA. Eshitilmagan yoki tushunarsiz narsani o'ylab topma, " +
+  "raqam uydirma. Raqamni faqat odam aniq summa yoki miqdor aytgandagina raqam bilan yoz. " +
+  "Agar aniq tushunarli nutq bo'lmasa, aynan shu so'zni qaytar: EMPTY. Faqat matnni qaytar, izoh yozma.";
+
+// Shovqindan kelib chiqqan uydirma natijani (masalan "329723y824379") ajratib tashlash
+function cleanTranscript(text) {
+  const t = String(text || "").replace(/^["«“]+|["»”]+$/g, "").trim();
+  if (!t || /^(EMPTY|NONE|BO'?SH|N\/A)\.?$/i.test(t)) return "";
+  const letters = (t.match(/\p{L}/gu) || []).length;
+  const tokens = t.split(/\s+/);
+  if (letters < 3) return "";
+  if (tokens.every((w) => w.replace(/[^\p{L}\d]/gu, "").length <= 2)) return "";
+  if (tokens.some((w) => w.length >= 7 && /\d/.test(w) && /\p{L}/u.test(w) && !/^\d+[.,]?\d*\p{L}{1,6}$/u.test(w))) return "";
+  const digits = (t.match(/\d/g) || []).length;
+  if (digits > letters * 2) return "";
+  return t;
+}
+
+async function transcribe(buffer, mimeType = "audio/ogg", hints = []) {
   if (provider() !== "gemini") return null;
+  const names = hints.filter(Boolean).slice(0, 40).join(", ");
   const res = await geminiGenerate({
     contents: [
       {
         role: "user",
         parts: [
           { inlineData: { mimeType, data: Buffer.from(buffer).toString("base64") } },
-          { text: "Bu ovozli xabarni so'zma-so'z matnga aylantir (o'zbek, rus yoki aralash til bo'lishi mumkin). Raqamlarni raqam bilan yoz. Faqat matnni qaytar." },
+          { text: "Shu ovozli xabarni matnga aylantir." + (names ? ` Tilga olinishi mumkin bo'lgan ismlar va nomlar: ${names}.` : "") },
         ],
       },
     ],
-    config: { temperature: 0 },
+    config: { systemInstruction: TRANSCRIBE_SYSTEM, temperature: 0 },
   });
-  return (res.text || "").trim();
+  return cleanTranscript(res.text);
 }
 
 const PROVIDER_NAMES = { gemini: "Gemini", claude: "Claude" };
@@ -575,5 +604,6 @@ module.exports = {
   providerName: () => PROVIDER_NAMES[provider()] || null,
   hasKey: () => !!provider(),
   transcribe,
+  cleanTranscript,
   fallbackParse,
 };

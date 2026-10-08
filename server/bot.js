@@ -9,7 +9,7 @@ const { dashboard, employeeStats, projectStats } = require("./finance");
 const money = (n) => Math.round(n || 0).toLocaleString("ru-RU").replace(/[\s,]/g, " ") + " so'm";
 const pct = (x) => (isFinite(x) ? (x * 100).toFixed(1).replace(".0", "") + "%" : "—");
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
-const scopeName = { agency: "Agentlik", personal: "Shaxsiy" };
+const scopeLabel = (data, id) => data.scopes.find((x) => x.id === id)?.name || id;
 
 // Matnda summa bo'lsa — bu operatsiya; "?" bilan boshlansa yoki savol so'zlari bo'lsa — chat.
 function isQuestion(text) {
@@ -23,7 +23,7 @@ function draftLine(d, data) {
   const proj = data.projects.find((p) => p.id === d.projectId)?.name;
   const emp = data.employees.find((e) => e.id === d.employeeId)?.name;
   return (
-    `${d.type === "income" ? "🟢 +" : "🔴 −"}<b>${money(d.amount)}</b> · ${scopeName[d.scope]}\n` +
+    `${d.type === "income" ? "🟢 +" : "🔴 −"}<b>${money(d.amount)}</b> · ${esc(scopeLabel(data, d.scope))}\n` +
     `   ${esc(cat)} · ${d.date}${proj ? ` · 📁 ${esc(proj)}` : ""}${emp ? ` · 👤 ${esc(emp)}` : ""}\n` +
     `   <i>${esc(d.note)}</i>`
   );
@@ -47,8 +47,7 @@ function monthReport(data) {
     `🔴 Chiqim: <b>${money(d.expense)}</b>`,
     `💰 Sof foyda: <b>${money(d.net)}</b> (${pct(d.savingsRate)})`,
     ``,
-    `🏢 Agentlik: ${money(d.byScope.agency.net)}`,
-    `🏠 Shaxsiy: ${money(d.byScope.personal.net)}`,
+    ...d.scopes.map((x) => `${x.kind === "personal" ? "🏠" : "🏢"} ${esc(x.name)}: ${money(x.net)}`),
     top.length ? `\n<b>Eng katta chiqimlar:</b>\n` + top.map((c) => `• ${esc(c.name)} — ${money(c.total)}`).join("\n") : "",
     projects.length ? `\n<b>Faol loyihalar:</b>\n` + projects.map(({ p, s }) => `• ${esc(p.name)}: foyda ${money(s.profit)}, marja ${pct(s.margin)}`).join("\n") : "",
     debt.length ? `\n<b>Xodimlarga qarz:</b>\n` + debt.map(({ e, s }) => `• ${esc(e.name)} — ${money(s.balance)}`).join("\n") : "",
@@ -113,56 +112,99 @@ function startBot({ telegram } = {}) {
     return ctx.reply("Suhbat tozalandi ✓");
   });
 
+  // Foydalanuvchi xabar yuborishi bilan reaksiya + "ishlayapman" holati ko'rsatiladi,
+  // natija chiqqach o'sha xabar tahrirlanadi (jim qolib ketmaydi)
+  const react = (ctx, emoji) => ctx.react(emoji).catch(() => {});
+  async function progress(ctx, text) {
+    let msg = null;
+    try {
+      msg = await ctx.reply(text);
+    } catch {}
+    return {
+      async set(t) {
+        if (msg) await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, t).catch(() => {});
+      },
+      // Yakuniy javob: holat xabarini tahrirlaydi, bo'lmasa yangi xabar yuboradi
+      async done(t, extra = {}) {
+        if (msg) {
+          try {
+            await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, undefined, t, extra);
+            return;
+          } catch {
+            await ctx.telegram.deleteMessage(ctx.chat.id, msg.message_id).catch(() => {});
+          }
+        }
+        await ctx.reply(t, extra);
+      },
+    };
+  }
+
   bot.on("voice", async (ctx) => {
+    await react(ctx, "👀");
     if (ai.provider() !== "gemini") {
       return ctx.reply(
         "🎙 Ovozli xabarni tushunish uchun serverda GEMINI_API_KEY kerak. Hozircha matn qilib yuboring (klaviaturadagi mikrofon tugmasi)."
       );
     }
+    const p = await progress(ctx, "🎧 Eshityapman…");
     try {
-      await ctx.sendChatAction("typing");
       const link = await ctx.telegram.getFileLink(ctx.message.voice.file_id);
       const audio = Buffer.from(await (await fetch(link)).arrayBuffer());
-      const text = await ai.transcribe(audio, ctx.message.voice.mime_type || "audio/ogg");
-      if (!text) return ctx.reply("Ovozni tushunolmadim, qaytadan yuboring.");
-      await ctx.reply(`🎙 «${text}»`);
-      return handleText(ctx, text);
+      const data = db.load();
+      const hints = [...data.employees.map((e) => e.name), ...data.projects.map((x) => x.name), ...data.scopes.map((x) => x.name)];
+      const text = await ai.transcribe(audio, ctx.message.voice.mime_type || "audio/ogg", hints);
+      if (!text) {
+        await react(ctx, "🤷");
+        return p.done("🙉 Aniq gap eshitilmadi (shovqin yoki yo'tal bo'lishi mumkin). Iltimos, sekinroq va aniqroq qilib qaytadan yuboring.");
+      }
+      await p.set(`🎙 «${text}»\n\n🤔 Tahlil qilyapman…`);
+      return handleText(ctx, text, { status: p, heard: text });
     } catch (e) {
       console.error(e);
-      return ctx.reply("⚠️ Ovozni o'qib bo'lmadi: " + e.message);
+      return p.done("⚠️ Ovozni o'qib bo'lmadi: " + e.message);
     }
   });
 
-  bot.on("text", (ctx) => {
+  bot.on("text", async (ctx) => {
     const text = ctx.message.text.trim();
     if (text.startsWith("/")) return;
+    await react(ctx, "👀");
     return handleText(ctx, text);
   });
 
-  async function handleText(ctx, text) {
-    await ctx.sendChatAction("typing");
+  async function handleText(ctx, text, opts = {}) {
+    await ctx.sendChatAction("typing").catch(() => {});
+    const question = isQuestion(text);
+    const p = opts.status || (await progress(ctx, question ? "🤔 O'ylayapman…" : "✍️ Yozib olyapman…"));
+    const quote = opts.heard ? `🎙 «${esc(opts.heard)}»\n\n` : "";
     const data = db.load();
     try {
-      if (isQuestion(text)) {
+      if (question) {
         const history = state().histories[ctx.from.id] || [];
         history.push({ role: "user", content: text.replace(/^[?？]\s*/, "") });
         const r = await ai.chat(data, history, { uid: db.uid, save: db.save });
         history.push({ role: "assistant", content: r.reply });
         state().histories[ctx.from.id] = history.slice(-20);
         db.save();
-        return ctx.reply(r.reply.slice(0, 4000));
+        await react(ctx, "👌");
+        return p.done((opts.heard ? `🎙 «${opts.heard}»\n\n` : "") + r.reply.slice(0, 3800));
       }
 
-      const { drafts, engine } = await ai.parseTransactions(data, text, "");
+      const defaultScope = "";
+      const { drafts, engine } = await ai.parseTransactions(data, text, defaultScope);
       const valid = drafts.filter((d) => d.amount > 0);
-      if (!valid.length) return ctx.reply("Summani topa olmadim. Masalan: «taksiga 40 ming».");
+      if (!valid.length) {
+        await react(ctx, "🤷");
+        return p.done(`${opts.heard ? `🎙 «${opts.heard}»\n\n` : ""}Summani topa olmadim. Masalan: «taksiga 40 ming».`);
+      }
       const id = db.uid();
       const st = state();
       for (const [k, v] of Object.entries(st.pending)) if (Date.now() - v.ts > PENDING_TTL) delete st.pending[k];
       st.pending[id] = { drafts: valid, userId: ctx.from.id, ts: Date.now() };
       db.save();
-      return ctx.reply(
-        `${engine !== "offline" ? "✦ AI aniqladi" : "Aniqlandi (offline)"}:\n\n` +
+      await react(ctx, "✍");
+      return p.done(
+        `${quote}${engine !== "offline" ? "✦ AI aniqladi" : "Aniqlandi (offline)"}:\n\n` +
           valid.map((d) => draftLine(d, data)).join("\n\n"),
         {
           parse_mode: "HTML",
@@ -174,7 +216,7 @@ function startBot({ telegram } = {}) {
       );
     } catch (e) {
       console.error(e);
-      return ctx.reply("⚠️ Xatolik: " + e.message);
+      return p.done("⚠️ Xatolik: " + e.message);
     }
   }
 
