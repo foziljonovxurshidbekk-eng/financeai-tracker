@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta http-equiv="Cache-Control" content="no-cache" />
+  <title>Glass Finance</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%2367e8f9'/><stop offset='1' stop-color='%23a78bfa'/></linearGradient></defs><rect width='64' height='64' rx='18' fill='url(%23g)'/><path d='M18 40l9-10 7 6 12-14' stroke='white' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css?v=fe45e2a" />
+</head>
+<body>
+  <!-- Liquid glass uchun animatsion fon -->
+  <div class="backdrop" aria-hidden="true">
+    <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><span class="blob b4"></span>
+  </div>
+
+  <!-- SVG refraksiya filtri (Chromium'da shisha qirralari "sinadi") -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <filter id="liquid" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="noise" />
+      <feGaussianBlur in="noise" stdDeviation="2" result="soft" />
+      <feDisplacementMap in="SourceGraphic" in2="soft" scale="38" xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>
+
+  <div class="shell">
+    <aside class="sidebar glass">
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <b>Glass Finance</b>
+          <small>Agentlik + shaxsiy</small>
+        </div>
+      </div>
+      <nav id="nav">
+        <a href="#dashboard" data-page="dashboard"><i>◎</i><span>Dashboard</span><b class="short">Asosiy</b></a>
+        <a href="#transactions" data-page="transactions"><i>⇅</i><span>Kirim-chiqim</span><b class="short">Pullar</b></a>
+        <a href="#projects" data-page="projects"><i>◈</i><span>Loyihalar</span><b class="short">Loyiha</b></a>
+        <a href="#team" data-page="team"><i>☺</i><span>Jamoa</span><b class="short">Jamoa</b></a>
+        <a href="#ai" data-page="ai"><i>✦</i><span>AI yordamchi</span><b class="short">AI</b></a>
+        <a href="#settings" data-page="settings"><i>⚙</i><span>Sozlamalar</span><b class="short">Sozlama</b></a>
+      </nav>
+      <button class="btn primary side-voice" id="sideVoice">🎙 Ovoz bilan qo'shish</button>
+      <div class="sidebar-foot">
+        <span id="aiBadge" class="pill">AI…</span>
+        <button class="icon-btn" id="themeBtn" title="Mavzu">◐</button>
+      </div>
+    </aside>
+
+    <main id="page" class="page"></main>
+  </div>
+
+  <!-- Tezkor AI kiritish tugmasi -->
+  <button class="fab glass" id="fab" title="Ovoz yoki matn bilan qo'shish">
+    <span class="mic-ico">🎙</span>
+  </button>
+
+  <div id="modalRoot"></div>
+  <div id="loadbar"></div>
+  <div id="toasts"></div>
+
+  <script src="vendor/chart.js/chart.umd.min.js"></script>
+  <script src="config.js?v=fe45e2a"></script>
+  <script src="app.js?v=fe45e2a"></script>
+</body>
+</html>
